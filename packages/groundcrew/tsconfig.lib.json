@@ -3,12 +3,13 @@
   "compilerOptions": {
     "composite": true,
     "declaration": true,
+    "emitDeclarationOnly": false,
     "module": "NodeNext",
     "allowImportingTsExtensions": true,
     "moduleResolution": "NodeNext",
+    "outDir": "./dist",
     "rewriteRelativeImportExtensions": true,
-    "outDir": "../../dist/packages/groundcrew",
-    "rootDir": ".",
+    "rootDir": "./src",
     "types": ["node"],
     "tsBuildInfoFile": "../../.nx/tsbuildinfo/packages/groundcrew/tsconfig.lib.tsbuildinfo"
   },

@@ -21,20 +21,32 @@
   "bin": {
     "crew": "./bin/run.js"
   },
+  "files": [
+    "README.md",
+    "bin",
+    "clearance-allow-hosts",
+    "configExample.ts",
+    "dist"
+  ],
   "type": "module",
-  "main": "./src/index.ts",
-  "typings": "./src/index.ts",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "typings": "./dist/index.d.ts",
   "exports": {
     "./package.json": "./package.json",
     ".": {
       "@clipboard-health/source": "./src/index.ts",
-      "types": "./src/index.ts",
-      "import": "./src/index.ts",
-      "default": "./src/index.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     }
   },
   "publishConfig": {
     "access": "public"
+  },
+  "scripts": {
+    "prepack": "tsgo --build tsconfig.lib.json"
   },
   "dependencies": {
     "@clipboard-health/clearance": "1.0.4",

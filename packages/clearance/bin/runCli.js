@@ -5,9 +5,9 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 /**
- * Load a side-effecting entrypoint by basename. In published/built mode, dynamically
- * imports the compiled `${name}.js` in-process. In source/dev mode (no compiled output
- * present), spawns a child node that loads the `.ts` source with
+ * Load a side-effecting entrypoint by basename. In published/built mode,
+ * dynamically imports the compiled `dist/${name}.js` in-process. In source/dev
+ * mode (no compiled output present), spawns a child node that loads the `.ts` source with
  * `--conditions @clipboard-health/source` so cross-package bare imports of
  * `@clipboard-health/*` workspace deps also resolve to source.
  *
@@ -15,7 +15,7 @@ import { pathToFileURL } from "node:url";
  * @param {string} name
  */
 export async function runCli(packageRoot, name) {
-  const compiledPath = join(packageRoot, "src", `${name}.js`);
+  const compiledPath = join(packageRoot, "dist", `${name}.js`);
   if (existsSync(compiledPath)) {
     await import(pathToFileURL(compiledPath).href);
     return;

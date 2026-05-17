@@ -9,7 +9,7 @@
       "executor": "nx:run-commands",
       "dependsOn": ["^build"],
       "inputs": ["production", "^production"],
-      "outputs": ["{workspaceRoot}/dist/packages/groundcrew"],
+      "outputs": ["{projectRoot}/dist"],
       "options": {
         "command": "tsgo --build packages/groundcrew/tsconfig.lib.json",
         "forwardAllArgs": false

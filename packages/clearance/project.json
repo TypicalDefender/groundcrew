@@ -9,7 +9,7 @@
       "executor": "nx:run-commands",
       "dependsOn": ["^build"],
       "inputs": ["production", "^production"],
-      "outputs": ["{workspaceRoot}/dist/packages/clearance"],
+      "outputs": ["{projectRoot}/dist"],
       "options": {
         "command": "tsgo --build packages/clearance/tsconfig.lib.json",
         "forwardAllArgs": false
