@@ -2,12 +2,16 @@
   "extends": ["@tsconfig/strictest", "@tsconfig/node24"],
   "compilerOptions": {
     "composite": true,
-    "customConditions": ["@clipboard/source"],
+    "customConditions": ["@clipboard-health/source"],
     "declarationMap": true,
     "emitDeclarationOnly": true,
     "erasableSyntaxOnly": true,
     "importHelpers": true,
     "moduleResolution": "nodenext",
-    "noEmitOnError": true
+    "noEmitOnError": true,
+    "paths": {
+      "@clipboard-health/clearance": ["./packages/clearance/src/index.ts"],
+      "@clipboard-health/groundcrew": ["./packages/groundcrew/src/index.ts"]
+    }
   }
 }

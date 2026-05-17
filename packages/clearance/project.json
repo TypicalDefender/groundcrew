@@ -11,7 +11,7 @@
       "inputs": ["production", "^production"],
       "outputs": ["{projectRoot}/dist"],
       "options": {
-        "command": "tsgo --build packages/clearance/tsconfig.lib.json",
+        "command": "tsgo --build --force packages/clearance/tsconfig.lib.json",
         "forwardAllArgs": false
       }
     },

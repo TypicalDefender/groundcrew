@@ -46,7 +46,7 @@
     "access": "public"
   },
   "scripts": {
-    "prepack": "tsgo --build tsconfig.lib.json"
+    "prepack": "tsgo --build --force tsconfig.lib.json"
   },
   "dependencies": {
     "@clipboard-health/clearance": "1.0.4",
