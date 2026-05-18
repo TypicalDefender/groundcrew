@@ -531,7 +531,9 @@ describe(remoteCli, () => {
     expect(command).toStrictEqual(
       expect.stringContaining("gh repo clone 'ClipboardHealth/core-utils' \"$repo_dir\""),
     );
-    expect(command).toStrictEqual(expect.stringContaining(`repo_dir="$HOME/dev"/'core-utils'`));
+    expect(command).toStrictEqual(
+      expect.stringContaining("repo_dir='/home/sprite/dev/ClipboardHealth--core-utils'"),
+    );
     expect(command).toStrictEqual(expect.stringContaining("git_remote='origin'"));
     expect(command).toStrictEqual(expect.stringContaining('git fetch "$git_remote" --prune'));
     expect(command).toStrictEqual(
@@ -996,6 +998,35 @@ describe(bootstrapRemoteRepository, () => {
     );
   });
 
+  it("defaults bootstrap owner, repo root, and secrets from remote config", async () => {
+    mockExistingSpriteForBootstrap();
+    const config = makeConfig();
+    config.remote.owner = "Acme";
+    config.remote.repoRoot = "/srv/repos";
+    config.remote.secretNames = ["CUSTOM_TOKEN", "OTHER_TOKEN"];
+    loadConfigMock.mockResolvedValue(config);
+    vi.stubEnv("CUSTOM_TOKEN", "custom-token");
+    vi.stubEnv("OTHER_TOKEN", "other-token");
+
+    await remoteCli(["bootstrap", "crew-claude-1", "core-utils"]);
+
+    const bootstrapCall = runCommandMock.mock.calls.find((call) =>
+      hasRemoteCommand(call, ["bash", "-lc"]),
+    );
+    expect(bootstrapCall?.[1]).toStrictEqual(
+      expect.arrayContaining(["--file", expect.stringMatching(/secrets\.env:/)]),
+    );
+    expect(bootstrapCall?.[1]?.at(-1)).toStrictEqual(
+      expect.stringContaining("gh repo clone 'Acme/core-utils'"),
+    );
+    expect(bootstrapCall?.[1]?.at(-1)).toStrictEqual(
+      expect.stringContaining("repo_dir='/srv/repos/Acme--core-utils'"),
+    );
+    expect(bootstrapCall?.[1]?.at(-1)).toStrictEqual(
+      expect.stringContaining("unset CUSTOM_TOKEN OTHER_TOKEN"),
+    );
+  });
+
   it("strips .git suffixes when choosing the remote repository directory", async () => {
     mockExistingSpriteForBootstrap();
 
@@ -1014,7 +1045,7 @@ describe(bootstrapRemoteRepository, () => {
       hasRemoteCommand(call, ["bash", "-lc"]),
     );
     expect(bootstrapCall?.[1]?.at(-1)).toStrictEqual(
-      expect.stringContaining(`repo_dir="$HOME/dev"/'core-utils'`),
+      expect.stringContaining("repo_dir='/home/sprite/dev/ClipboardHealth--core-utils'"),
     );
   });
 
@@ -1032,6 +1063,26 @@ describe(bootstrapRemoteRepository, () => {
     await expect(
       remoteCli(["bootstrap", "crew-claude-1", "core-utils", "--secret", "bad-secret"]),
     ).rejects.toThrow(/Invalid secret name/);
+    await expect(
+      remoteCli([
+        "bootstrap",
+        "crew-claude-1",
+        "core-utils",
+        "--secret",
+        "NPM_TOKEN",
+        "--no-secrets",
+      ]),
+    ).rejects.toThrow(/--secret and --no-secrets are mutually exclusive/);
+    await expect(
+      remoteCli([
+        "bootstrap",
+        "crew-claude-1",
+        "core-utils",
+        "--no-secrets",
+        "--secret",
+        "NPM_TOKEN",
+      ]),
+    ).rejects.toThrow(/--secret and --no-secrets are mutually exclusive/);
     await expect(
       remoteCli(["bootstrap", "crew-claude-1", "core-utils", "--bogus"]),
     ).rejects.toThrow(/Unknown remote bootstrap argument/);
