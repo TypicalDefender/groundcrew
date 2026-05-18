@@ -1,8 +1,15 @@
+import { connect } from "node:net";
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { runCommandAsync, type RunCommandOptions } from "./commandRunner.ts";
 import type { RemoteRunnerConfig, RemoteRunnerProviderName } from "./config.ts";
 import { shellSingleQuote } from "./shell.ts";
 
 const LONG_RUNNING_COMMAND_OPTIONS = { stdio: "inherit", timeoutMs: 0 } as const;
+const PROXY_CLOSE_SIGNAL = "SIGINT";
+const PROXY_READY_HOST = "127.0.0.1";
+const PROXY_READY_TIMEOUT_MS = 5000;
+const PROXY_READY_RETRY_DELAY_MS = 25;
 
 export const SPRITE_REMOTE_PROVIDER_DEFAULTS = {
   provider: "sprite",
@@ -65,6 +72,7 @@ export interface RemoteRunnerProvider {
   runCommand(arguments_: RemoteRunArguments): Promise<string | undefined>;
   runTtyCommand(arguments_: RemoteRunArguments): Promise<void>;
   buildTtyCommand(arguments_: RemoteTtyCommandArguments): string;
+  startPortProxy(config: RemoteRunnerConfig, port: number): Promise<{ close(): Promise<void> }>;
   listSessions(config: RemoteRunnerConfig): Promise<string>;
   attachSession(config: RemoteRunnerConfig, target: string): Promise<void>;
   listProcesses(config: RemoteRunnerConfig): Promise<string>;
@@ -260,6 +268,110 @@ async function createSpriteRunner(config: RemoteRunnerConfig): Promise<void> {
   });
 }
 
+async function startSpritePortProxy(
+  config: RemoteRunnerConfig,
+  port: number,
+): Promise<{ close(): Promise<void> }> {
+  const controller = new AbortController();
+  let closeWasRequested = false;
+  let proxyError: Error | undefined;
+  const proxy = (async () => {
+    try {
+      await runCommandAsync("sprite", ["proxy", "-s", config.runnerName, String(port)], {
+        signal: controller.signal,
+        stdio: "inherit",
+        timeoutMs: 0,
+      });
+      if (!closeWasRequested) {
+        proxyError = new Error("Sprite proxy exited before it was closed.");
+      }
+    } catch (error) {
+      if (closeWasRequested && errorHasSignal(error, PROXY_CLOSE_SIGNAL)) {
+        return;
+      }
+      proxyError = new Error(`Sprite proxy exited before it was closed: ${String(error)}`, {
+        cause: error,
+      });
+    }
+  })();
+
+  try {
+    await waitForSpritePortProxy({ port, proxy, proxyError: () => proxyError });
+  } catch (error) {
+    closeWasRequested = true;
+    controller.abort();
+    await proxy;
+    throw error;
+  }
+
+  return {
+    async close() {
+      closeWasRequested = true;
+      controller.abort();
+      await proxy;
+      if (proxyError !== undefined) {
+        throw new Error(proxyError.message, { cause: proxyError });
+      }
+    },
+  };
+}
+
+async function waitForSpritePortProxy(arguments_: {
+  port: number;
+  proxy: Promise<void>;
+  proxyError: () => Error | undefined;
+}): Promise<void> {
+  const deadline = Date.now() + PROXY_READY_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    throwIfProxyExited(arguments_.proxyError());
+    // eslint-disable-next-line no-await-in-loop -- readiness polling must observe attempts sequentially.
+    if (await canConnectToLocalPort(arguments_.port)) {
+      throwIfProxyExited(arguments_.proxyError());
+      return;
+    }
+    throwIfProxyExited(arguments_.proxyError());
+    // eslint-disable-next-line no-await-in-loop -- retry delay is bounded and stops early if the proxy exits.
+    await Promise.race([sleep(PROXY_READY_RETRY_DELAY_MS), arguments_.proxy]);
+  }
+  throwIfProxyExited(arguments_.proxyError());
+  throw new Error(
+    `Timed out waiting for Sprite proxy on ${PROXY_READY_HOST}:${arguments_.port} to accept connections.`,
+  );
+}
+
+function throwIfProxyExited(error: Error | undefined): void {
+  if (error !== undefined) {
+    throw new Error(error.message, { cause: error });
+  }
+}
+
+async function canConnectToLocalPort(port: number): Promise<boolean> {
+  return await new Promise<boolean>((resolve) => {
+    const socket = connect({ host: PROXY_READY_HOST, port });
+    socket.once("connect", () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once("error", () => {
+      socket.destroy();
+      resolve(false);
+    });
+  });
+}
+
+function errorHasSignal(error: unknown, signal: string): boolean {
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+  if ("signal" in error && error.signal === signal) {
+    return true;
+  }
+  if (error instanceof Error && error.cause !== undefined) {
+    return errorHasSignal(error.cause, signal);
+  }
+  return false;
+}
+
 export const spriteRemoteRunnerProvider: RemoteRunnerProvider = {
   name: "sprite",
   async runnerExists(config) {
@@ -279,6 +391,9 @@ export const spriteRemoteRunnerProvider: RemoteRunnerProvider = {
     });
   },
   buildTtyCommand: buildSpriteTtyCommand,
+  async startPortProxy(config, port) {
+    return await startSpritePortProxy(config, port);
+  },
   async listSessions(config) {
     const output = await runCommandAsync("sprite", ["sessions", "list", "-s", config.runnerName], {
       trim: false,

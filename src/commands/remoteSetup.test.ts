@@ -11,10 +11,21 @@ type RunCommandAsyncMock = (
   arguments_: readonly string[],
   options?: RunCommandOptions,
 ) => Promise<string | undefined>;
+interface FakeSocket {
+  destroy(): FakeSocket;
+  once(eventName: string, listener: () => void): FakeSocket;
+  setTimeout(timeoutMilliseconds: number): FakeSocket;
+}
+
+type ConnectMock = (options: { host: string; port: number }) => FakeSocket;
 
 const runCommandMock = vi.hoisted(() => vi.fn<RunCommandAsyncMock>());
 const loadConfigMock = vi.hoisted(() => vi.fn<() => Promise<Readonly<ResolvedConfig>>>());
+const connectMock = vi.hoisted(() => vi.fn<ConnectMock>());
 const CLAUDE_SUBSCRIPTION_LOGIN_FLAG = ["--claude", "ai"].join("");
+
+// oxlint-disable-next-line jest/no-untyped-mock-factory -- typed dynamic imports conflict with Node builtin module typings.
+vi.mock("node:net", () => ({ connect: connectMock }));
 
 vi.mock(import("../lib/commandRunner.ts"), async (importOriginal) => {
   const actual = await importOriginal();
@@ -90,6 +101,30 @@ function expectRemoteCommand(remoteCommand: readonly string[]): void {
   );
 }
 
+function mockProxyPortReady(): void {
+  connectMock.mockImplementation(() => {
+    const socket: FakeSocket = {
+      destroy: () => socket,
+      once(eventName, listener) {
+        if (eventName === "connect") {
+          queueMicrotask(listener);
+        }
+        return socket;
+      },
+      setTimeout: () => socket,
+    };
+    return socket;
+  });
+}
+
+async function waitForProxyAbort(options: RunCommandOptions | undefined): Promise<string> {
+  return await new Promise<string>((_resolve, reject) => {
+    options?.signal?.addEventListener("abort", () => {
+      reject(Object.assign(new Error("aborted"), { signal: "SIGINT" }));
+    });
+  });
+}
+
 function mockSpriteList(output: string): void {
   runCommandMock.mockImplementation(async (command, arguments_) => {
     if (command === "sprite" && arguments_[0] === "list") {
@@ -155,6 +190,32 @@ function mockSpriteListWithCodexStatus(options: {
   return () => codexStatusCalls;
 }
 
+function mockSpriteListWithDatadogStatus(options: {
+  failuresBeforeSuccess?: number;
+  alwaysFail?: boolean;
+}): () => number {
+  let datadogStatusCalls = 0;
+  runCommandMock.mockImplementation(async (command, arguments_, commandOptions) => {
+    if (command === "sprite" && arguments_[0] === "list") {
+      return "NAME STATUS\ncrew-claude-1 running";
+    }
+    if (command === "sprite" && arguments_[0] === "proxy") {
+      return await waitForProxyAbort(commandOptions);
+    }
+    if (hasRemoteCommand([command, arguments_], ["pup", "auth", "status"])) {
+      datadogStatusCalls += 1;
+      if (
+        options.alwaysFail === true ||
+        datadogStatusCalls <= (options.failuresBeforeSuccess ?? 0)
+      ) {
+        throw new Error("datadog missing");
+      }
+    }
+    return "";
+  });
+  return () => datadogStatusCalls;
+}
+
 function isInteractiveCodexLoginCall(call: readonly unknown[]): boolean {
   const [, arguments_] = call;
   return (
@@ -164,8 +225,23 @@ function isInteractiveCodexLoginCall(call: readonly unknown[]): boolean {
   );
 }
 
+function isInteractiveDatadogLoginCall(call: readonly unknown[]): boolean {
+  const [, arguments_] = call;
+  return (
+    Array.isArray(arguments_) &&
+    hasRemoteCommand(call, ["pup", "auth", "login"]) &&
+    !arguments_.includes("status")
+  );
+}
+
+function resetProxyPortReadyMock(): void {
+  connectMock.mockReset();
+  mockProxyPortReady();
+}
+
 describe(remoteCli, () => {
   beforeEach(() => {
+    resetProxyPortReadyMock();
     loadConfigMock.mockResolvedValue(makeConfig());
     mockSpriteList("NAME STATUS\ncrew-claude-1 running");
   });
@@ -226,6 +302,9 @@ describe(remoteCli, () => {
       remoteCli(["setup", "crew-claude-1", "--mcp", "bad$name=https://example.com/mcp"]),
     ).rejects.toThrow(/Invalid MCP server name/);
     await expect(remoteCli(["setup", "crew-claude-1", "--bogus"])).rejects.toThrow(
+      /Unknown remote setup argument/,
+    );
+    await expect(remoteCli(["setup", "crew-claude-1", "--pup"])).rejects.toThrow(
       /Unknown remote setup argument/,
     );
   });
@@ -467,6 +546,10 @@ describe(remoteCli, () => {
 });
 
 describe(setupRemoteRunner, () => {
+  beforeEach(() => {
+    resetProxyPortReadyMock();
+  });
+
   afterEach(() => {
     vi.clearAllMocks();
   });
@@ -587,6 +670,92 @@ describe(setupRemoteRunner, () => {
     expect(runCommandMock.mock.calls.some(isInteractiveCodexLoginCall)).toBe(false);
   });
 
+  it("sets up Datadog pup and authenticates through a temporary Sprite port proxy", async () => {
+    const datadogStatusCalls = mockSpriteListWithDatadogStatus({ failuresBeforeSuccess: 1 });
+
+    await remoteCli(["setup", "crew-claude-1", "--datadog", "--no-create"]);
+
+    const installCall = runCommandMock.mock.calls.find((call) =>
+      String(call[1].at(-1)).includes("version='0.63.0'"),
+    );
+    const installScript = String(installCall?.[1]?.at(-1));
+    expect(installScript).toStrictEqual(expect.stringContaining("version='0.63.0'"));
+    expect(installScript).toStrictEqual(expect.stringContaining("sha256sum -c"));
+    expect(installScript).toStrictEqual(expect.stringContaining('install_dir="$(mktemp -d)"'));
+    expect(installScript).toStrictEqual(
+      expect.stringContaining("trap 'rm -rf \"$install_dir\"' EXIT"),
+    );
+    const shellVariable = "$";
+    const installDirectoryVariable = `${shellVariable}{install_dir}`;
+    const assetVariable = `${shellVariable}{asset}`;
+    const versionVariable = `${shellVariable}{version}`;
+    expect(installScript).toStrictEqual(
+      expect.stringContaining(`archive="${installDirectoryVariable}/${assetVariable}"`),
+    );
+    expect(installScript).toStrictEqual(
+      expect.stringContaining(
+        `checksums="${installDirectoryVariable}/pup_${versionVariable}_checksums.txt"`,
+      ),
+    );
+    expect(installScript).not.toStrictEqual(expect.stringContaining('archive="/tmp/'));
+    expect(installScript).not.toStrictEqual(expect.stringContaining('checksums="/tmp/'));
+    expectRemoteCommand(["pup", "skills", "install", "claude-code", "--name", "dd-pup", "--yes"]);
+    expectRemoteCommand(["pup", "skills", "install", "codex", "--name", "dd-pup", "--yes"]);
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "sprite",
+      ["proxy", "-s", "crew-claude-1", "8000"],
+      expect.objectContaining({ timeoutMs: 0 }),
+    );
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "sprite",
+      [
+        "exec",
+        "--tty",
+        "-s",
+        "crew-claude-1",
+        "--",
+        "pup",
+        "auth",
+        "login",
+        "--read-only",
+        "--callback-port",
+        "8000",
+      ],
+      { stdio: "inherit", timeoutMs: 0 },
+    );
+    expect(datadogStatusCalls()).toBe(2);
+  });
+
+  it("retries Datadog auth status briefly after OAuth", async () => {
+    const datadogStatusCalls = mockSpriteListWithDatadogStatus({ failuresBeforeSuccess: 2 });
+
+    await remoteCli(["setup", "crew-claude-1", "--datadog", "--no-create"]);
+
+    expect(datadogStatusCalls()).toBe(3);
+  });
+
+  it("skips Datadog OAuth when pup auth is already valid", async () => {
+    mockSpriteListWithDatadogStatus({});
+
+    await remoteCli(["setup", "crew-claude-1", "--datadog", "--no-create"]);
+
+    expect(runCommandMock.mock.calls.some(isInteractiveDatadogLoginCall)).toBe(false);
+    expect(
+      runCommandMock.mock.calls.some((call) => hasRemoteCommand(call, ["proxy", "8000"])),
+    ).toBe(false);
+  });
+
+  it("fails with Datadog auth guidance when pup login still does not validate", async () => {
+    const datadogStatusCalls = mockSpriteListWithDatadogStatus({ alwaysFail: true });
+
+    await expect(remoteCli(["setup", "crew-claude-1", "--datadog", "--no-create"])).rejects.toThrow(
+      /Datadog auth/,
+    );
+
+    expect(runCommandMock.mock.calls.some(isInteractiveDatadogLoginCall)).toBe(true);
+    expect(datadogStatusCalls()).toBe(6);
+  });
+
   it("copies local codex auth when requested and validates it", async () => {
     const temporaryCodexHome = mkdtempSync(join(tmpdir(), "groundcrew-codex-home-"));
     const localAuthFile = join(temporaryCodexHome, "auth.json");
@@ -673,6 +842,10 @@ describe(setupRemoteRunner, () => {
 });
 
 describe(bootstrapRemoteRepository, () => {
+  beforeEach(() => {
+    resetProxyPortReadyMock();
+  });
+
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.clearAllMocks();
