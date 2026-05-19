@@ -88,6 +88,7 @@ function makeConfig(overrides: {
     models: { default: "claude", definitions: models },
     prompts: { initial: "x" },
     workspaceKind: "auto",
+    local: { runner: "auto" },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
