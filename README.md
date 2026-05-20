@@ -289,38 +289,74 @@ To have a coding agent (Claude Code, Cursor, etc.) scaffold `.groundcrew/setup.s
 ## Commands
 
 ```bash
-crew doctor                        # full setup check
-crew doctor --ticket <TICKET>      # diagnose one ticket
-crew run                           # one-shot dispatch
-crew run --watch                   # poll forever
-crew run --ticket <TICKET>         # provision one ticket and exit
+crew doctor                                              # full setup check
+crew doctor --ticket <TICKET> [--no-linear] [--no-fetch] # full ticket lifecycle (dispatch + recovery)
+crew run                                                 # one-shot dispatch
+crew run --watch                                         # poll forever
+crew run --ticket <TICKET>                               # provision one ticket and exit
 crew setup repos [--dry-run] [<repo>...]
-crew cleanup <TICKET>              # tear down every worktree carrying this ticket
+crew cleanup <TICKET>                                    # tear down every worktree carrying this ticket
 ```
 
-`--watch` and `--ticket` are mutually exclusive. To inspect codexbar session windows directly, run `codexbar usage`.
+`crew doctor --ticket <TICKET>` covers the full per-ticket lifecycle: pre-dispatch eligibility (Todo status, `agent-*` label, model resolution, repository mention, local clone, blockers, model session usage, in-progress capacity) **and** post-dispatch local-state recovery (host worktree, workspace pane, local branch, remote branch, open PR). Verdict precedence runs from post-dispatch outcomes down: `pr-open` > `pr-merged` > `in-flight` > `recoverable` > `unresolvable` > `ineligible` > `would-dispatch` > `lost`. Exits 0 on `would-dispatch`, `pr-open`, or `pr-merged`; any other verdict exits 1. `--watch` and `--ticket` are mutually exclusive. To inspect codexbar session windows directly, run `codexbar usage`.
 
 ### `crew doctor --ticket <ticket>`
 
-Diagnose why a ticket would or wouldn't be dispatched on the next tick. Runs the same resolution and eligibility chain as the dispatcher. Exits 0 if the ticket would dispatch, 1 otherwise. The hero above shows a passing run; here's a failing one:
+Diagnose where a ticket is in its lifecycle and what to do next. Runs the same resolution and eligibility chain as the dispatcher, plus probes the host worktree, workspace pane, local branch, remote branch, and PR; prints a single verdict with a copy-pasteable recovery step when one applies.
+
+Flags:
+
+- `--no-linear` — skip the Linear GraphQL call. Resolution and Eligibility sections are skipped; verdicts that need only local state (`in-flight`, `recoverable`, `pr-open`, `pr-merged`, `lost`) still fire.
+- `--no-fetch` — skip the upfront `git fetch origin <branch>` before checking remote presence.
+
+The Workspace section appends an attach hint to the pane name when the workspace backend exposes one (e.g. `tmux attach -t <session>:<pane>` or `cmux attach <name>`), so the verdict line is immediately actionable. The hero above shows a passing pre-dispatch run; here's the same command on a ticket that's already past dispatch:
 
 ```text
-groundcrew doctor --ticket HRD-447 (Refactor auth middleware)
-─────────────────────────────────────────────────────────────
+groundcrew doctor --ticket HRD-442 (Multi-event extractor: year inference can produce date_start > date_end)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 Resolution
-  [ok] Ticket exists in Linear ("Refactor auth middleware")
-  [--] Status is Todo (current: In Progress)
-  [ok] Has agent-* label (agent-claude)
-  [ok] Model resolves from agent-* label (model "claude")
-  [ok] Description mentions known repo (owner/repo)
-  [ok] Resolved repo is cloned locally (/dev/workspaces/owner/repo)
+  [ok] Ticket exists in Linear ("Multi-event extractor: year inference can produce date_start > date_end")
+  [ok] Status is Todo
+  (skipped — post-dispatch — pre-dispatch checks are irrelevant)
 
 Eligibility
-  (skipped — resolution checks failed)
+  (skipped — post-dispatch — pre-dispatch checks are irrelevant)
 
-→ ineligible: status is In Progress (need Todo)
+Worktree
+  [ok] Host worktree exists (/Users/paul/dev/groundcrew-workspaces/herds-social/herds-hrd-442)
+  [--] Working tree clean (0 modified, 1 untracked)
+  [ok] Branch checked out (paul-hrd-442)
+
+Workspace
+  [ok] Workspace pane open (hrd-442 — attach: `tmux attach -t groundcrew:hrd-442`)
+
+Local branch
+  [ok] Local branch exists (paul-hrd-442, 2 ahead / 0 behind origin/main)
+
+Remote branch
+  [ok] Branch present on origin
+
+Pull request
+  [ok] Open PR for this branch (#224 https://github.com/herds-social/herds/pull/224)
+
+→ pr-open: https://github.com/herds-social/herds/pull/224 (#224)
 ```
+
+#### Recovering a stranded ticket
+
+The verdict on the last line maps to a recovery action:
+
+| Verdict          | What to do                                                                                    |
+| ---------------- | --------------------------------------------------------------------------------------------- |
+| `pr-open`        | Nothing — the PR is the source of truth.                                                      |
+| `pr-merged`      | Done.                                                                                         |
+| `in-flight`      | The ticket is still being worked on; the verdict line names the workspace pane to attach to.  |
+| `recoverable`    | Run the printed `nextStep` exactly.                                                           |
+| `would-dispatch` | Pre-dispatch checks pass; the orchestrator will pick the ticket up on its next tick.          |
+| `ineligible`     | A resolution or eligibility check failed; the reason after the colon names the failing check. |
+| `unresolvable`   | The Linear ticket couldn't be fetched; the reason after the colon names the error.            |
+| `lost`           | No trace exists. Re-dispatch via `crew run --ticket <ticket>`.                                |
 
 ## Troubleshooting
 

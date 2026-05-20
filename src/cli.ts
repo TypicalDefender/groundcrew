@@ -5,7 +5,7 @@ import { doctor } from "./commands/doctor.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
 import { setupReposCli } from "./commands/setupRepos.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
-import { errorMessage, writeError, writeOutput } from "./lib/util.ts";
+import { errorMessage, readTicketArgument, writeError, writeOutput } from "./lib/util.ts";
 
 interface PackageMetadata {
   version: string;
@@ -48,11 +48,7 @@ async function runCli(argv: string[]): Promise<void> {
       continue;
     }
     if (argument === "--ticket") {
-      const value = argv[index + 1];
-      if (value === undefined || value.length === 0 || value.startsWith("-")) {
-        throw new Error("crew run --ticket: ticket id is required");
-      }
-      ticket = value;
+      ticket = readTicketArgument(argv, index, "run");
       index += 1;
       continue;
     }
@@ -72,22 +68,33 @@ async function runCli(argv: string[]): Promise<void> {
 
 async function doctorCli(argv: string[]): Promise<void> {
   let ticket: string | undefined;
+  const remainingArgs: string[] = [];
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--ticket") {
-      const value = argv[index + 1];
-      if (value === undefined || value.length === 0 || value.startsWith("-")) {
-        throw new Error("crew doctor --ticket: ticket id is required");
-      }
-      ticket = value;
+      ticket = readTicketArgument(argv, index, "doctor");
       index += 1;
+      continue;
+    }
+    if (argument === "--no-linear" || argument === "--no-fetch") {
+      remainingArgs.push(argument);
       continue;
     }
     throw new Error(`crew doctor: unknown argument: ${argument}`);
   }
 
-  const ok = ticket === undefined ? await doctor() : await doctor({ ticket });
+  if (ticket === undefined) {
+    if (remainingArgs.length > 0) {
+      throw new Error(
+        `crew doctor: ${remainingArgs[0]} requires --ticket (host doctor mode has no flags)`,
+      );
+    }
+    const ok = await doctor();
+    process.exitCode = ok ? process.exitCode : 1;
+    return;
+  }
+  const ok = await doctor({ ticket, ticketArgv: remainingArgs });
   process.exitCode = ok ? process.exitCode : 1;
 }
 
@@ -98,8 +105,9 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     invoke: runCli,
   },
   doctor: {
-    summary: "Verify prereqs, or diagnose one ticket with --ticket",
-    usage: "[--ticket <ticket>]",
+    summary:
+      "Verify prereqs, or diagnose one ticket with --ticket (full lifecycle: dispatch eligibility + local-state recovery)",
+    usage: "[--ticket <ticket> [--no-linear] [--no-fetch]]",
     invoke: doctorCli,
   },
   cleanup: {

@@ -4,7 +4,8 @@ import { tmpdir, userInfo } from "node:os";
 import { join, sep } from "node:path";
 
 import { probeError } from "../testHelpers/workspaceProbe.ts";
-import type { RunCommandOptions } from "./commandRunner.ts";
+import type * as commandRunnerModule from "./commandRunner.ts";
+import { runCommandAsync, type RunCommandOptions } from "./commandRunner.ts";
 import type { ResolvedConfig } from "./config.ts";
 import { workspaces } from "./workspaces.ts";
 import { type WorktreeEntry, worktrees } from "./worktrees.ts";
@@ -1003,5 +1004,99 @@ describe(teardown, () => {
 
     const allArguments = runCommandMock.mock.calls.flatMap(([, arguments_]) => arguments_);
     expect(allArguments).toContain("--force");
+  });
+});
+
+describe("worktrees.branchNameForTicket", () => {
+  it("returns the same branch name that create() uses", () => {
+    expect(worktrees.branchNameForTicket("HRD-442")).toMatch(/-HRD-442$/);
+  });
+
+  it("is case-preserving on the ticket portion", () => {
+    expect(worktrees.branchNameForTicket("hrd-442")).toMatch(/-hrd-442$/);
+  });
+});
+
+describe("worktrees.probeWorkingTree", () => {
+  beforeEach(async () => {
+    // Strip inherited GIT_* env vars so probe tests run against the temp repo,
+    // not whatever repo invoked vitest (e.g. via a `git push` pre-push hook
+    // that sets GIT_DIR, which would override `git -C <tempdir>`).
+    // vi.stubEnv with undefined removes the var; neutralizes an inherited
+    // GIT_DIR (e.g. from a pre-push hook) that would otherwise override the
+    // `git -C <tempdir>` flag inside probeWorktreeDirtiness.
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- undefined is the unset signal here
+    vi.stubEnv("GIT_DIR", undefined);
+    // oxlint-disable-next-line unicorn/no-useless-undefined
+    vi.stubEnv("GIT_WORK_TREE", undefined);
+    // oxlint-disable-next-line unicorn/no-useless-undefined
+    vi.stubEnv("GIT_INDEX_FILE", undefined);
+    // Restore the real runCommandAsync for these tests so the probe actually
+    // shells out to git against a real temp repo.
+    const actual = await vi.importActual<typeof commandRunnerModule>("./commandRunner.ts");
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- bridging the shared sync/async mock recorder to the real async implementation; same pattern as the top-of-file vi.mock.
+    runCommandMock.mockImplementation(actual.runCommandAsync as unknown as RunCommandMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    runCommandMock.mockReset();
+  });
+
+  it("returns kind: 'clean' for a worktree with no changes", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "groundcrew-probe-"));
+    try {
+      await runCommandAsync("git", ["-C", tempDir, "init", "-q"]);
+      const probe = await worktrees.probeWorkingTree({ worktreeDir: tempDir });
+      expect(probe.kind).toBe("clean");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns kind: 'dirty' with counts for an untracked file", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "groundcrew-probe-"));
+    try {
+      await runCommandAsync("git", ["-C", tempDir, "init", "-q"]);
+      writeFileSync(join(tempDir, "new.txt"), "x");
+      const probe = await worktrees.probeWorkingTree({ worktreeDir: tempDir });
+      expect(probe).toMatchObject({ kind: "dirty", modified: 0, untracked: 1 });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns kind: 'unknown' when the directory is not a git repo", async () => {
+    // Hits the catch branch in probeWorktreeDirtiness: `git status` against
+    // a missing directory exits non-zero, runCommandAsync rejects, the catch
+    // swallows it, and the wrapper surfaces the third union member.
+    const tempDir = mkdtempSync(join(tmpdir(), "groundcrew-probe-"));
+    rmSync(tempDir, { recursive: true, force: true });
+
+    const probe = await worktrees.probeWorkingTree({ worktreeDir: tempDir });
+
+    expect(probe.kind).toBe("unknown");
+  });
+
+  it("returns kind: 'unknown' when the signal is already aborted", async () => {
+    // Pins down signal forwarding through probeWorkingTree:
+    // runCommandAsync throws synchronously when options.signal.aborted is true,
+    // so dropping `input.signal` from the wrapper would yield "clean" here
+    // instead of "unknown" and fail this assertion.
+    const tempDir = mkdtempSync(join(tmpdir(), "groundcrew-probe-"));
+    try {
+      await runCommandAsync("git", ["-C", tempDir, "init", "-q"]);
+      const controller = new AbortController();
+      controller.abort();
+
+      const probe = await worktrees.probeWorkingTree({
+        worktreeDir: tempDir,
+        signal: controller.signal,
+      });
+
+      expect(probe.kind).toBe("unknown");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });

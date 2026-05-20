@@ -242,8 +242,30 @@ describe(run, () => {
 
     await run(["doctor", "--ticket", "team-220"]);
 
-    expect(doctorMock).toHaveBeenCalledWith({ ticket: "team-220" });
+    expect(doctorMock).toHaveBeenCalledWith({ ticket: "team-220", ticketArgv: [] });
     expect(process.exitCode).toBeUndefined();
+  });
+
+  it("forwards --no-linear and --no-fetch to the ticket diagnostic", async () => {
+    doctorMock.mockResolvedValue(true);
+
+    await run(["doctor", "--ticket", "team-220", "--no-linear", "--no-fetch"]);
+
+    expect(doctorMock).toHaveBeenCalledWith({
+      ticket: "team-220",
+      ticketArgv: ["--no-linear", "--no-fetch"],
+    });
+  });
+
+  it("accepts ticket-mode flags interleaved before --ticket", async () => {
+    doctorMock.mockResolvedValue(true);
+
+    await run(["doctor", "--no-fetch", "--ticket", "team-220"]);
+
+    expect(doctorMock).toHaveBeenCalledWith({
+      ticket: "team-220",
+      ticketArgv: ["--no-fetch"],
+    });
   });
 
   it("sets exit code to 1 when `doctor --ticket` fails", async () => {
@@ -266,6 +288,14 @@ describe(run, () => {
     await run(["doctor", "--bogus"]);
 
     expect(consoleError.output()).toContain("unknown argument: --bogus");
+    expect(process.exitCode).toBe(1);
+    expect(doctorMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects ticket-mode flags without --ticket (host doctor has no flags)", async () => {
+    await run(["doctor", "--no-linear"]);
+
+    expect(consoleError.output()).toContain("--no-linear requires --ticket");
     expect(process.exitCode).toBe(1);
     expect(doctorMock).not.toHaveBeenCalled();
   });

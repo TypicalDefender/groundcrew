@@ -130,6 +130,38 @@ export function getLinearClient(): LinearClient {
   return new LinearClient({ apiKey: resolved.value });
 }
 
+/**
+ * Returns a zero-arg getter that lazily constructs (and caches) a Linear
+ * client on first call. Used by CLI entry points that may not need the
+ * client at all (e.g. `--no-linear`), so we avoid blowing up on a missing
+ * API key when no Linear call is actually made. The factory is taken as a
+ * parameter (rather than calling `getLinearClient` directly) so callers can
+ * pass their own module-level import of `getLinearClient` — that binding
+ * respects `vi.mock` intercepts, whereas an intra-module reference would
+ * not.
+ */
+export function lazyLinearClient(factory: () => LinearClient): () => LinearClient {
+  let client: LinearClient | undefined;
+  return () => {
+    client ??= factory();
+    return client;
+  };
+}
+
+/**
+ * Reads the value that follows `--ticket` at `argv[index + 1]`. Throws a
+ * uniform "ticket id is required" error if the value is missing, empty, or
+ * looks like another flag (starts with `-`). Centralizes the validation so
+ * each subcommand's arg parser stays DRY.
+ */
+export function readTicketArgument(argv: string[], index: number, command: string): string {
+  const value = argv[index + 1];
+  if (value === undefined || value.length === 0 || value.startsWith("-")) {
+    throw new Error(`crew ${command} --ticket: ticket id is required`);
+  }
+  return value;
+}
+
 export function errorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
