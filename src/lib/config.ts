@@ -268,11 +268,26 @@ const DEFAULT_MODEL_DEFINITIONS: Record<string, ModelDefinition> = {
 };
 
 const DEFAULT_PROMPT_INITIAL = [
-  "Begin work on {{ticket}} ({{title}}) in the {{worktree}} wt subdirectory.",
+  "You are working on Linear ticket {{ticket}} ({{title}}) in the {{worktree}} worktree subdirectory.",
   "",
   "Ticket description:",
   "",
   "{{description}}",
+  "",
+  "## Operating mode",
+  "",
+  "There is no human watching this session. Do not stop to ask clarifying questions. When the ticket is ambiguous or incomplete, choose the simplest reasonable interpretation consistent with the ticket and the codebase, then document that choice in the PR description.",
+  "",
+  "## Workflow",
+  "",
+  "1. Inspect the repository instructions and existing patterns before editing.",
+  "2. Implement the smallest sensible change that completes the ticket.",
+  "3. Run the repository's documented verification command. If no documented verification exists, run the smallest relevant test suite you can find. Fix failures you introduced before continuing.",
+  "4. Review your own diff before stopping. Look for bugs, regressions, missing tests, security issues, and convention violations, then fix any issues you find.",
+  "5. If this repository uses GitHub and the `gh` CLI is available and authenticated, open a pull request. If you cannot open one, leave the branch ready and record the blocker.",
+  "6. Include a short continuation note in the PR body when you know how to reattach to this workspace. For the tmux backend, use `tmux attach -t groundcrew:{{ticket}}`.",
+  "",
+  "Stop after the branch is ready or the PR is open.",
 ].join("\n");
 
 const ALLOWED_PROMPT_PLACEHOLDERS = new Set([
