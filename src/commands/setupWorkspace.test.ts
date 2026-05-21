@@ -143,7 +143,9 @@ function buildResolveIssueResponse(overrides: {
   title?: string;
   description?: string | null | undefined;
   labels?: MockedLabel[];
+  projectSlugId?: string | null;
 }): unknown {
+  const projectSlugId = "projectSlugId" in overrides ? overrides.projectSlugId : "aaaaaaaaaaaa";
   return {
     data: {
       issue: {
@@ -152,6 +154,7 @@ function buildResolveIssueResponse(overrides: {
         description: "description" in overrides ? overrides.description : "Body for repo-a",
         labels: { nodes: overrides.labels ?? [] },
         team: { id: overrides.teamId ?? "team-1" },
+        project: projectSlugId === null ? null : { slugId: projectSlugId },
       },
     },
   };
@@ -184,9 +187,13 @@ function hostEntry(): WorktreeEntry {
 function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): ResolvedConfig {
   return {
     linear: {
-      projectSlug: "x-aaaaaaaaaaaa",
-      slugId: "aaaaaaaaaaaa",
-      statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
+      projects: [
+        {
+          projectSlug: "x-aaaaaaaaaaaa",
+          slugId: "aaaaaaaaaaaa",
+          statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
+        },
+      ],
     },
     git: { remote: "origin", defaultBranch: "main" },
     workspace: {

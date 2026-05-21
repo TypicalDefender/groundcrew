@@ -315,5 +315,6 @@ export async function setupWorkspaceCli(
     id: ticket.toLowerCase(),
     uuid: resolved.uuid,
     teamId: resolved.teamId,
+    projectSlugId: resolved.projectSlugId,
   });
 }

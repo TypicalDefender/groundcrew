@@ -33,9 +33,13 @@ const workspacesProbeMock = vi.mocked(workspaces.probe);
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
     linear: {
-      projectSlug: "ai-strategy-aaaaaaaaaaaa",
-      slugId: "aaaaaaaaaaaa",
-      statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
+      projects: [
+        {
+          projectSlug: "ai-strategy-aaaaaaaaaaaa",
+          slugId: "aaaaaaaaaaaa",
+          statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
+        },
+      ],
       ...overrides.linear,
     },
     git: { remote: "origin", defaultBranch: "main", ...overrides.git },
@@ -77,6 +81,7 @@ function todoIssue(overrides: Partial<Issue> = {}): Issue {
     repository: "repo-a",
     model: "claude",
     teamId: "team-1",
+    projectSlugId: "aaaaaaaaaaaa",
     blockers: [],
     hasMoreBlockers: false,
     ...overrides,
@@ -256,7 +261,14 @@ describe(createDispatcher, () => {
       await dispatcher.runOnce({
         state: boardOf([
           todoIssue({
-            blockers: [{ id: "team-0", title: "Blocker", status: "In Progress" }],
+            blockers: [
+              {
+                id: "team-0",
+                title: "Blocker",
+                status: "In Progress",
+                projectSlugId: "aaaaaaaaaaaa",
+              },
+            ],
           }),
         ]),
         worktreeEntries: [],
@@ -276,7 +288,11 @@ describe(createDispatcher, () => {
 
       await dispatcher.runOnce({
         state: boardOf([
-          todoIssue({ blockers: [{ id: "team-0", title: "Blocker", status: "Done" }] }),
+          todoIssue({
+            blockers: [
+              { id: "team-0", title: "Blocker", status: "Done", projectSlugId: "aaaaaaaaaaaa" },
+            ],
+          }),
         ]),
         worktreeEntries: [],
         usage: async () => ({}),
@@ -311,7 +327,11 @@ describe(createDispatcher, () => {
 
       await dispatcher.runOnce({
         state: boardOf([
-          todoIssue({ blockers: [{ id: "team-0", title: "Blocker", status: undefined }] }),
+          todoIssue({
+            blockers: [
+              { id: "team-0", title: "Blocker", status: undefined, projectSlugId: "aaaaaaaaaaaa" },
+            ],
+          }),
         ]),
         worktreeEntries: [],
         usage: async () => ({}),
@@ -333,12 +353,26 @@ describe(createDispatcher, () => {
         state: boardOf([
           todoIssue({
             id: "team-1",
-            blockers: [{ id: "team-0", title: "Blocker", status: "In Progress" }],
+            blockers: [
+              {
+                id: "team-0",
+                title: "Blocker",
+                status: "In Progress",
+                projectSlugId: "aaaaaaaaaaaa",
+              },
+            ],
           }),
           todoIssue({
             id: "team-2",
             uuid: "uuid-2",
-            blockers: [{ id: "team-0", title: "Blocker", status: "In Progress" }],
+            blockers: [
+              {
+                id: "team-0",
+                title: "Blocker",
+                status: "In Progress",
+                projectSlugId: "aaaaaaaaaaaa",
+              },
+            ],
           }),
         ]),
         worktreeEntries: [],

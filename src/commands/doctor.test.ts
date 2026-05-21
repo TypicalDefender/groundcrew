@@ -72,6 +72,7 @@ interface RawIssueStub {
   title: string;
   description: string | null;
   team: { id: string } | null;
+  project: { slugId: string } | null;
   state: { name: string } | null;
   labels: { nodes: { name: string }[] };
   inverseRelations: {
@@ -81,6 +82,7 @@ interface RawIssueStub {
         identifier: string;
         title: string;
         state?: { name: string } | null;
+        project?: { slugId: string } | null;
       } | null;
     }[];
     pageInfo: { hasNextPage: boolean; endCursor: string };
@@ -92,9 +94,13 @@ type LinearRawRequest = (query: string, variables?: Record<string, unknown>) => 
 function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): ResolvedConfig {
   return {
     linear: {
-      projectSlug: "x-aaaaaaaaaaaa",
-      slugId: "aaaaaaaaaaaa",
-      statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
+      projects: [
+        {
+          projectSlug: "x-aaaaaaaaaaaa",
+          slugId: "aaaaaaaaaaaa",
+          statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
+        },
+      ],
     },
     git: { remote: "origin", defaultBranch: "main" },
     workspace: {
@@ -179,6 +185,7 @@ function rawIssue(overrides: Partial<RawIssueStub> = {}): RawIssueStub {
     title: "Fix the thing",
     description: "Touches repo-a.",
     team: { id: "team-default" },
+    project: { slugId: "aaaaaaaaaaaa" },
     state: { name: "Todo" },
     labels: { nodes: [{ name: "agent-claude" }] },
     inverseRelations: { nodes: [], pageInfo: { hasNextPage: false, endCursor: "" } },
@@ -186,8 +193,18 @@ function rawIssue(overrides: Partial<RawIssueStub> = {}): RawIssueStub {
   };
 }
 
-function activeNodes(count: number): { id: string }[] {
-  return Array.from({ length: count }, (_value, index) => ({ id: `active-${index}` }));
+interface ActiveNodeStub {
+  id: string;
+  project: { slugId: string };
+  state: { name: string };
+}
+
+function activeNodes(count: number): ActiveNodeStub[] {
+  return Array.from({ length: count }, (_value, index) => ({
+    id: `active-${index}`,
+    project: { slugId: "aaaaaaaaaaaa" },
+    state: { name: "In Progress" },
+  }));
 }
 
 function makeLinearClient(

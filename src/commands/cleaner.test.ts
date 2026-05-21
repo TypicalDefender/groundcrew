@@ -27,9 +27,13 @@ const removeRunStateMock = vi.mocked(removeRunState);
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
     linear: {
-      projectSlug: "ai-strategy-aaaaaaaaaaaa",
-      slugId: "aaaaaaaaaaaa",
-      statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
+      projects: [
+        {
+          projectSlug: "ai-strategy-aaaaaaaaaaaa",
+          slugId: "aaaaaaaaaaaa",
+          statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
+        },
+      ],
       ...overrides.linear,
     },
     git: { remote: "origin", defaultBranch: "main", ...overrides.git },
@@ -68,6 +72,7 @@ function doneIssue(id: string, overrides: Partial<Issue> = {}): Issue {
     repository: "repo-a",
     model: "claude",
     teamId: "team-1",
+    projectSlugId: "aaaaaaaaaaaa",
     blockers: [],
     hasMoreBlockers: false,
     ...overrides,
@@ -149,14 +154,18 @@ describe(createCleaner, () => {
     const cleaner = createCleaner({
       config: makeConfig({
         linear: {
-          projectSlug: "x-aaaaaaaaaaaa",
-          slugId: "aaaaaaaaaaaa",
-          statuses: {
-            todo: "Todo",
-            inProgress: "In Progress",
-            done: "Done",
-            terminal: ["Done", "Released"],
-          },
+          projects: [
+            {
+              projectSlug: "x-aaaaaaaaaaaa",
+              slugId: "aaaaaaaaaaaa",
+              statuses: {
+                todo: "Todo",
+                inProgress: "In Progress",
+                done: "Done",
+                terminal: ["Done", "Released"],
+              },
+            },
+          ],
         },
       }),
     });
