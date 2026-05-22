@@ -1264,6 +1264,39 @@ describe(resolveRepositoryFor, () => {
     expect(result).toStrictEqual({ kind: "ok", repository: "herds-social/herds" });
   });
 
+  it("canonicalizes a bare repo mention to the full owner/repo entry from config", () => {
+    const config = makeConfig({
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["herds-social/herds_mobile_app"],
+      },
+    });
+    const result = resolveRepositoryFor({
+      description: "work on herds_mobile_app",
+      config,
+      ticket: "HRD-1",
+    });
+    expect(result).toStrictEqual({
+      kind: "ok",
+      repository: "herds-social/herds_mobile_app",
+    });
+  });
+
+  it("returns missing when a bare repo mention matches multiple configured repos", () => {
+    const config = makeConfig({
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["OrgA/shared-repo", "OrgB/shared-repo"],
+      },
+    });
+    const result = resolveRepositoryFor({
+      description: "work on shared-repo",
+      config,
+      ticket: "HRD-1",
+    });
+    expect(result).toStrictEqual({ kind: "missing" });
+  });
+
   it("returns missing when no known repo is in the description", () => {
     const config = makeConfig({
       workspace: { projectDir: "/work", knownRepositories: ["herds-social/herds"] },

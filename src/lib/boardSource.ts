@@ -671,11 +671,26 @@ export function resolveRepositoryFor(arguments_: {
   if (description === undefined || description.length === 0) {
     return { kind: "missing" };
   }
-  const repository = buildRepositoryRegex(config).exec(description)?.[1];
-  if (repository === undefined) {
+  const match = buildRepositoryRegex(config).exec(description)?.[1];
+  if (match === undefined) {
     return { kind: "missing" };
   }
-  return { kind: "ok", repository };
+  // `buildRepositoryRegex` matches both the full `owner/repo` entry and its bare
+  // suffix, so the captured value can be either form. Downstream code composes
+  // the resolved value with `workspace.projectDir` and needs the exact
+  // `knownRepositories` entry, so resolve back to that form here.
+  const candidates = config.workspace.knownRepositories.filter(
+    (entry) => entry === match || entry.endsWith(`/${match}`),
+  );
+  if (candidates.length !== 1) {
+    return { kind: "missing" };
+  }
+  const [canonical] = candidates;
+  /* v8 ignore next 3 @preserve -- candidates.length === 1 guarantees [0] is defined */
+  if (canonical === undefined) {
+    return { kind: "missing" };
+  }
+  return { kind: "ok", repository: canonical };
 }
 
 export type ModelResolution =
