@@ -84,6 +84,7 @@ function makeStubRawIssue(overrides: Partial<RawLinearIssue> = {}): RawLinearIss
     stateName: "Todo",
     blockers: [],
     hasMoreBlockers: false,
+    hasChildren: false,
     ...overrides,
   };
 }
@@ -642,6 +643,48 @@ describe("ticketDoctor resolution checks", () => {
     expect(modelCheck?.status).toBe("ok");
     expect(modelCheck?.detail).toMatch(/claude/);
   });
+
+  // A parent ticket (one with sub-issues) is silently dropped by
+  // `fetchBoard` so the dispatcher never sees it. Doctor must surface that
+  // explicitly — otherwise the diagnostic lies, reporting "would dispatch"
+  // for a ticket the orchestrator will never touch.
+  it("records 'Has no sub-issues' as fail when the ticket has children", async () => {
+    const dependencies = makeStubDependencies({
+      fetchRawIssue: vi
+        .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+        .mockResolvedValue(
+          makeStubRawIssue({
+            labels: [{ name: "agent-claude" }],
+            stateName: "Todo",
+            description: "see repo-a",
+            hasChildren: true,
+          }),
+        ),
+    });
+    const result = await ticketDoctor(dependencies);
+    const childrenCheck = result.resolution.find((check) => check.name === "Has no sub-issues");
+    expect(childrenCheck?.status).toBe("fail");
+    const ineligible = narrowVerdict(result.verdict, "ineligible");
+    expect(ineligible.reason).toMatch(/sub-issue/i);
+  });
+
+  it("records 'Has no sub-issues' as ok when the ticket has no children", async () => {
+    const dependencies = makeStubDependencies({
+      fetchRawIssue: vi
+        .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+        .mockResolvedValue(
+          makeStubRawIssue({
+            labels: [{ name: "agent-claude" }],
+            stateName: "Todo",
+            description: "see repo-a",
+            hasChildren: false,
+          }),
+        ),
+    });
+    const result = await ticketDoctor(dependencies);
+    const childrenCheck = result.resolution.find((check) => check.name === "Has no sub-issues");
+    expect(childrenCheck?.status).toBe("ok");
+  });
 });
 
 describe("ticketDoctor — env checks", () => {
@@ -664,6 +707,7 @@ describe("ticketDoctor — env checks", () => {
             stateName: "Todo",
             blockers: [],
             hasMoreBlockers: false,
+            hasChildren: false,
           }),
       });
       const result = await ticketDoctor(dependencies);
@@ -698,6 +742,7 @@ describe("ticketDoctor — env checks", () => {
             stateName: "Todo",
             blockers: [],
             hasMoreBlockers: false,
+            hasChildren: false,
           }),
       });
       const result = await ticketDoctor(dependencies);
@@ -764,6 +809,7 @@ describe("ticketDoctor — env checks", () => {
           stateName: "Todo",
           blockers: [],
           hasMoreBlockers: false,
+          hasChildren: false,
         }),
     });
     const result = await ticketDoctor(dependencies);
@@ -800,6 +846,7 @@ describe("ticketDoctor — eligibility phase", () => {
           stateName: "Todo",
           blockers: [],
           hasMoreBlockers: false,
+          hasChildren: false,
         }),
       fetchUsage: vi.fn<TicketDoctorDependencies["fetchUsage"]>().mockResolvedValue({
         claude: { session: 0.23, sessionEndDuration: null, weekly: null, weekEndDuration: null },
@@ -948,6 +995,7 @@ describe("ticketDoctor — eligibility phase", () => {
             stateName: "Todo",
             blockers: [],
             hasMoreBlockers: false,
+            hasChildren: false,
           }),
         fetchUsage: vi.fn<TicketDoctorDependencies["fetchUsage"]>().mockResolvedValue({
           claude: { session: 0.1, sessionEndDuration: null, weekly: null, weekEndDuration: null },

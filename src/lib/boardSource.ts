@@ -66,9 +66,24 @@ export function isGroundcrewIssue(issue: Issue): issue is GroundcrewIssue {
   return issue.model !== undefined && issue.repository !== undefined;
 }
 
+/**
+ * Linear ticket that was silently dropped from `issues` because it has at
+ * least one sub-issue and groundcrew works sub-issues rather than parents.
+ * The dispatcher logs each one per tick so operators see WHY a Todo ticket
+ * isn't being picked up instead of just "No Todo tickets to pick up." Only
+ * Todo+agent-labelled parents qualify — non-actionable parents (e.g. Done
+ * epics) would be noise.
+ */
+export interface ParentSkip {
+  id: string;
+  title: string;
+  childCount: number;
+}
+
 export interface BoardState {
   timestamp: string;
   issues: Issue[];
+  parentSkips: ParentSkip[];
 }
 
 export class RepositoryResolutionError extends Error {
@@ -337,7 +352,35 @@ async function fetchBoard(client: LinearClient, config: ResolvedConfig): Promise
     .filter((node) => issueStatusBelongsToOwnProject(node, config))
     .map((node) => issueFromNode(node, config, repositoryRegex));
 
-  return { timestamp: new Date().toISOString(), issues };
+  const parentSkips: ParentSkip[] = nodes
+    .filter((node) => node.children.nodes.length > 0)
+    .filter((node) => isTodoParentForOwnProject(node, config))
+    .map((node) => ({
+      id: node.identifier.toLowerCase(),
+      title: node.title,
+      childCount: node.children.nodes.length,
+    }));
+
+  return { timestamp: new Date().toISOString(), issues, parentSkips };
+}
+
+/**
+ * Narrows parent tickets to those the dispatcher would otherwise pick up —
+ * Todo status under their own project's configured status names. Done /
+ * In Progress parents aren't surprising drops, so we don't log them.
+ */
+function isTodoParentForOwnProject(node: IssueNode, config: ResolvedConfig): boolean {
+  const slugId = node.project?.slugId?.toLowerCase();
+  /* v8 ignore next 3 @preserve -- GraphQL slugId filter scopes results to configured projects */
+  if (slugId === undefined) {
+    return false;
+  }
+  const project = findProjectBySlugId(config, slugId);
+  /* v8 ignore next 3 @preserve -- GraphQL slugId filter scopes results to configured projects */
+  if (project === undefined) {
+    return false;
+  }
+  return node.state?.name === project.statuses.todo;
 }
 
 function modelForResolution(resolution: ModelResolution): string | undefined {
@@ -464,6 +507,13 @@ export interface RawLinearIssue {
   stateName: string;
   blockers: Blocker[];
   hasMoreBlockers: boolean;
+  /**
+   * `true` when the ticket has at least one sub-issue (child). Parent
+   * tickets are filtered out by `fetchBoard` and never dispatched —
+   * doctor reads this to surface that decision instead of falsely
+   * reporting "would dispatch."
+   */
+  hasChildren: boolean;
 }
 
 export async function fetchBlockersForTicket(arguments_: {
@@ -533,6 +583,7 @@ export async function fetchRawLinearIssue(arguments_: {
         team { id }
         project { slugId }
         state { name }
+        children { nodes { id } }
         labels(first: ${ISSUE_LABEL_PAGE_SIZE}) {
           nodes { name }
         }
@@ -561,6 +612,7 @@ export async function fetchRawLinearIssue(arguments_: {
       team?: { id: string } | null;
       project?: { slugId: string } | null;
       state?: { name: string } | null;
+      children?: { nodes: { id: string }[] } | null;
       labels: { nodes: { name: string }[] };
       inverseRelations?: {
         nodes: IssueRelationNode[];
@@ -581,6 +633,7 @@ export async function fetchRawLinearIssue(arguments_: {
     stateName: issue.state?.name ?? "",
     blockers: blockersFromRelations(issue.inverseRelations?.nodes ?? []),
     hasMoreBlockers: issue.inverseRelations?.pageInfo.hasNextPage ?? false,
+    hasChildren: (issue.children?.nodes.length ?? 0) > 0,
   };
 }
 

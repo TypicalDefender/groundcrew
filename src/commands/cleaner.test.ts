@@ -84,7 +84,7 @@ function todoIssue(id: string, overrides: Partial<Issue> = {}): Issue {
 }
 
 function boardOf(issues: Issue[]): BoardState {
-  return { timestamp: "2025-01-01T00:00:00.000Z", issues };
+  return { timestamp: "2025-01-01T00:00:00.000Z", issues, parentSkips: [] };
 }
 
 function hostEntryFor(repository: string, ticket: string): WorktreeEntry {

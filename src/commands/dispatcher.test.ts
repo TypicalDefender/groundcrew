@@ -93,7 +93,7 @@ function activeIssue(overrides: Partial<Issue> = {}): Issue {
 }
 
 function boardOf(issues: Issue[]): BoardState {
-  return { timestamp: "2025-01-01T00:00:00.000Z", issues };
+  return { timestamp: "2025-01-01T00:00:00.000Z", issues, parentSkips: [] };
 }
 
 function hostEntryFor(repository: string, ticket: string): WorktreeEntry {
@@ -877,6 +877,54 @@ describe(createDispatcher, () => {
       });
 
       expect(consoleLog.output()).toContain("Failed to start team-1: boom");
+    });
+  });
+
+  // Without these logs, a parent Todo ticket disappears silently from the
+  // daemon log — operators see "No Todo tickets to pick up" and can't tell
+  // why. Surfacing each parent skip makes the silent fetchBoard filter
+  // visible.
+  describe("parent ticket logging", () => {
+    it("emits a dispatch skip event for every parent ticket in state.parentSkips", async () => {
+      const client = makeClient();
+      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+
+      await dispatcher.runOnce({
+        state: {
+          timestamp: "2025-01-01T00:00:00.000Z",
+          issues: [],
+          parentSkips: [
+            { id: "team-9", title: "Umbrella epic", childCount: 3 },
+            { id: "team-10", title: "Another epic", childCount: 1 },
+          ],
+        },
+        worktreeEntries: [],
+        usage: async () => ({}),
+        dryRun: false,
+      });
+
+      const output = consoleLog.output();
+      expect(output).toContain(
+        "event=dispatch outcome=skipped reason=parent_with_children ticket=team-9",
+      );
+      expect(output).toContain(
+        "event=dispatch outcome=skipped reason=parent_with_children ticket=team-10",
+      );
+      expect(output).toMatch(/team-9.*3 sub-issue/);
+    });
+
+    it("does not log parent skips when state.parentSkips is empty", async () => {
+      const client = makeClient();
+      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+
+      await dispatcher.runOnce({
+        state: boardOf([]),
+        worktreeEntries: [],
+        usage: async () => ({}),
+        dryRun: false,
+      });
+
+      expect(consoleLog.output()).not.toContain("reason=parent_with_children");
     });
   });
 });

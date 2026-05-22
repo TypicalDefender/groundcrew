@@ -145,6 +145,21 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     const { state, worktreeEntries, usage, dryRun, signal, idleSuffix = "" } = arguments_;
     issueStatusUpdater.resetMissingInProgressCache();
 
+    // Surface parent tickets that fetchBoard silently dropped. Without this
+    // an operator sees "No Todo tickets to pick up" with no signal that an
+    // expected Todo+labelled ticket was skipped because it has sub-issues.
+    for (const skip of state.parentSkips) {
+      log(
+        `Skipping ${skip.id}: parent ticket with ${skip.childCount} sub-issue(s) — groundcrew works sub-issues, not parents`,
+      );
+      logEvent("dispatch", {
+        outcome: "skipped",
+        reason: "parent_with_children",
+        ticket: skip.id,
+        children: skip.childCount,
+      });
+    }
+
     const activeCount = state.issues.filter(
       (issue) => issue.status === projectFor(issue, config).statuses.inProgress,
     ).length;

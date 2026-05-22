@@ -305,6 +305,48 @@ describe(createBoardSource, () => {
       expect(state.issues.map((index) => index.id)).toStrictEqual(["team-2"]);
     });
 
+    it("surfaces Todo parents as parentSkips so the dispatcher can log them", async () => {
+      const { source } = makeBoardSource(
+        makeClient({
+          pages: [
+            [
+              issueNode({
+                identifier: "TEAM-1",
+                id: "uuid-1",
+                title: "Umbrella epic",
+                state: { id: "state-todo", name: "Todo" },
+                children: { nodes: [{ id: "c1" }, { id: "c2" }, { id: "c3" }] },
+              }),
+              issueNode({ identifier: "TEAM-2", id: "uuid-2" }),
+            ],
+          ],
+        }),
+      );
+      const state = await source.fetch();
+      expect(state.parentSkips).toStrictEqual([
+        { id: "team-1", title: "Umbrella epic", childCount: 3 },
+      ]);
+    });
+
+    it("omits non-Todo parents from parentSkips — a Done epic isn't a surprising drop", async () => {
+      const { source } = makeBoardSource(
+        makeClient({
+          pages: [
+            [
+              issueNode({
+                identifier: "TEAM-1",
+                id: "uuid-1",
+                state: { id: "state-done", name: "Done" },
+                children: { nodes: [{ id: "c1" }] },
+              }),
+            ],
+          ],
+        }),
+      );
+      const state = await source.fetch();
+      expect(state.parentSkips).toStrictEqual([]);
+    });
+
     it("drops issues whose project slugId isn't in linear.projects", async () => {
       // The GraphQL slugId filter normally scopes results to configured
       // projects; this guards against a degenerate Linear response that

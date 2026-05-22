@@ -422,6 +422,19 @@ function buildRepoChecks(
   return { resolvedRepository, checks };
 }
 
+function buildChildrenCheck(raw: RawLinearIssue): TicketCheck {
+  if (raw.hasChildren) {
+    return {
+      name: "Has no sub-issues",
+      status: "fail",
+      detail:
+        "parent ticket with sub-issues — groundcrew works sub-issues, not parents; label a sub-issue or detach the children",
+      failureSummary: "parent ticket with sub-issues — groundcrew works sub-issues, not parents",
+    };
+  }
+  return { name: "Has no sub-issues", status: "ok" };
+}
+
 interface EligibilityCheckArguments {
   ticket: string;
   raw: RawLinearIssue;
@@ -922,6 +935,13 @@ async function runPreDispatch(input: PreDispatchInput): Promise<PreDispatchOutpu
 
   const { resolvedModel, checks: modelChecks } = buildModelChecks(raw, config);
   resolutionExtra.push(...modelChecks);
+
+  // Children check comes before repo checks: a parent ticket is a
+  // structural property of the issue itself (filtered out by `fetchBoard`,
+  // so the dispatcher will never act on it). Reporting that first beats
+  // surfacing "your repo isn't cloned" for a ticket groundcrew won't pick
+  // up either way.
+  resolutionExtra.push(buildChildrenCheck(raw));
 
   const { resolvedRepository, checks: repoChecks } = buildRepoChecks(raw, config, ticket);
   resolutionExtra.push(...repoChecks);
