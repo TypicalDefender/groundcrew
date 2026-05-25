@@ -9,9 +9,25 @@ import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
 import { sandboxCli } from "./commands/sandbox/index.ts";
 import { setupReposCli } from "./commands/setupRepos.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
-import { errorMessage, readTicketArgument, writeError, writeOutput } from "./lib/util.ts";
+import { createDefaultUpgradeCliOptions, upgradeCli } from "./commands/upgrade.ts";
+import {
+  computeUpgradeNudge,
+  defaultUpgradeCheckCachePath,
+  fetchLatestVersion,
+} from "./lib/upgrade.ts";
+import {
+  errorMessage,
+  readEnvironmentVariable,
+  readTicketArgument,
+  writeError,
+  writeOutput,
+} from "./lib/util.ts";
+
+const NUDGE_TTL_MS = 6 * 60 * 60 * 1000;
+const NUDGE_FETCH_TIMEOUT_MS = 1000;
 
 interface PackageMetadata {
+  name: string;
   version: string;
 }
 
@@ -68,6 +84,36 @@ async function runCli(argv: string[]): Promise<void> {
     return;
   }
   await setupWorkspaceCli(ticket, { dryRun });
+}
+
+async function upgradeCliInvoke(argv: string[]): Promise<void> {
+  const metadata = packageMetadata();
+  await upgradeCli(
+    argv,
+    async () =>
+      await createDefaultUpgradeCliOptions({
+        currentVersion: metadata.version,
+        packageName: metadata.name,
+        cliMetaUrl: import.meta.url,
+      }),
+  );
+}
+
+async function maybeRunUpgradeNudge(metadata: PackageMetadata): Promise<void> {
+  const message = await computeUpgradeNudge({
+    currentVersion: metadata.version,
+    packageName: metadata.name,
+    cachePath: defaultUpgradeCheckCachePath(),
+    ttlMs: NUDGE_TTL_MS,
+    fetchTimeoutMs: NUDGE_FETCH_TIMEOUT_MS,
+    registry: readEnvironmentVariable("npm_config_registry"),
+    noUpgradeCheck: readEnvironmentVariable("GROUNDCREW_NO_UPGRADE_CHECK") === "1",
+    now: Date.now,
+    fetcher: fetchLatestVersion,
+  });
+  if (message !== undefined) {
+    writeError(message);
+  }
 }
 
 async function doctorCli(argv: string[]): Promise<void> {
@@ -144,6 +190,11 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     usage: "repos [--dry-run] [<repo>...]",
     invoke: setupCli,
   },
+  upgrade: {
+    summary: "Install the latest version of crew (or pin to a specific version)",
+    usage: "[<version>] [--check]",
+    invoke: upgradeCliInvoke,
+  },
 };
 
 function printHelp(): void {
@@ -161,10 +212,14 @@ function printHelp(): void {
   writeOutput("\nSee README.md for full configuration and behavior.");
 }
 
+function packageMetadata(): PackageMetadata {
+  // oxlint-disable-next-line typescript-eslint/no-unsafe-assignment -- package.json is shipped with this package and is the metadata source of truth.
+  const metadata: PackageMetadata = requireFromCli("../package.json");
+  return metadata;
+}
+
 function packageVersion(): string {
-  // oxlint-disable-next-line typescript-eslint/no-unsafe-assignment -- package.json is shipped with this package and is the version source of truth.
-  const packageMetadata: PackageMetadata = requireFromCli("../package.json");
-  return packageMetadata.version;
+  return packageMetadata().version;
 }
 
 export async function run(argv: string[]): Promise<void> {
@@ -189,6 +244,14 @@ export async function run(argv: string[]): Promise<void> {
     printHelp();
     process.exitCode = 1;
     return;
+  }
+
+  if (subcommand !== "upgrade") {
+    try {
+      await maybeRunUpgradeNudge(packageMetadata());
+    } catch {
+      // Passive nudge is never load-bearing; never block the user's command.
+    }
   }
 
   try {
