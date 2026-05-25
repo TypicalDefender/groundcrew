@@ -219,6 +219,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): Resolved
     },
     workspaceKind: "auto",
     local: { runner: "auto" },
+    sandbox: { authRecipes: {}, gitDefaults: false },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
