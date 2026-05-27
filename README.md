@@ -94,28 +94,18 @@ crew cleanup <TICKET>                                    # tear down every workt
 crew upgrade [<version>]                                 # reinstall crew globally through npm
 ```
 
-Deprecated aliases still work but print a warning and will be removed in the next major version: `crew interrupt` → `crew stop`, `crew run --ticket <TICKET>` → `crew start <TICKET>`, `crew doctor --ticket <TICKET>` → `crew status <TICKET>`.
+## Manual repository bootstrap
 
-## Manual Repository Bootstrap
-
-Groundcrew no longer clones repositories for you. For each `workspace.knownRepositories` entry,
-clone the repository into `workspace.projectDir` using the same relative path that appears in the
-config. For an `OWNER/REPO` entry:
+Groundcrew never clones repositories for you. Clone each `workspace.knownRepositories` entry into `workspace.projectDir` using the same relative path the config uses. For an `OWNER/REPO` entry:
 
 ```bash
 PROJECT_DIR="$HOME/dev/c"
 mkdir -p "$PROJECT_DIR/OWNER"
 git clone git@github.com:OWNER/REPO.git "$PROJECT_DIR/OWNER/REPO"
+# HTTPS works the same: git clone https://github.com/OWNER/REPO.git "$PROJECT_DIR/OWNER/REPO"
 ```
 
-HTTPS works the same way if you do not use SSH:
-
-```bash
-git clone https://github.com/OWNER/REPO.git "$PROJECT_DIR/OWNER/REPO"
-```
-
-Bare-name entries do not include an owner, so choose the correct remote URL yourself and clone it to
-`$PROJECT_DIR/<name>`. `crew setup repos` now exits non-zero and points back to this section.
+Bare-name entries have no owner, so pick the remote URL yourself and clone to `$PROJECT_DIR/<name>`.
 
 ## Configuration
 
@@ -144,7 +134,7 @@ Status classification uses Linear's workflow `state.type` (`unstarted`, `started
 <details>
 <summary>Config discovery</summary>
 
-Resolution order: `GROUNDCREW_CONFIG` → cosmiconfig project-walk from cwd (any of `crew.config.{ts,mjs,js,json}`, `.crewrc{,.json,.ts}`, `.config/crew.config.{ts,json}`, `.config/crewrc{,.json}`) → `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/crew.config.ts` (legacy `config.ts` accepted for one release). The "Loaded config from …" line at startup tells you which won.
+Resolution order: `GROUNDCREW_CONFIG` → cosmiconfig project-walk from cwd (any of `crew.config.{ts,mjs,js,json}`, `.crewrc{,.json,.ts}`, `.config/crew.config.{ts,json}`, `.config/crewrc{,.json}`) → `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/crew.config.ts`. The "Loaded config from …" line at startup tells you which won.
 
 </details>
 
@@ -153,7 +143,7 @@ Resolution order: `GROUNDCREW_CONFIG` → cosmiconfig project-walk from cwd (any
 
 | Key                                     | Default             | What it does                                                                                                                                                                                                                                                                                                                                                            |
 | --------------------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sources`                               | `[]`                | Additional pluggable ticket sources. Extra sources are verified at startup; the built-in Linear adapter remains the dispatch read path until the canonical consumer refactor. Built-in kinds: `shell`, `linear`.                                                                                                                                                        |
+| `sources`                               | `[]`                | Additional pluggable ticket sources, dispatched alongside the built-in Linear adapter. Built-in kinds: `shell`, `linear`.                                                                                                                                                                                                                                               |
 | `git.remote`                            | `"origin"`          | Remote used for `fetch` and as the worktree base ref.                                                                                                                                                                                                                                                                                                                   |
 | `git.defaultBranch`                     | `"main"`            | Branch fetched from `git.remote` and used as the worktree base.                                                                                                                                                                                                                                                                                                         |
 | `workspace.projectDir`                  | **required**        | Parent dir for cloned repos and sibling ticket worktrees.                                                                                                                                                                                                                                                                                                               |
@@ -269,7 +259,7 @@ In Progress (state.type=started) — Multi-event extractor: year inference can p
 
 ### `crew start <TICKET>`
 
-Launches one ticket immediately, bypassing orchestrator eligibility. Use it to dispatch a specific ticket on demand — including unlabeled tickets that `crew run` ignores. (Replaces the deprecated `crew run --ticket <TICKET>`.)
+Launches one ticket immediately, bypassing orchestrator eligibility. Use it to dispatch a specific ticket on demand — including unlabeled tickets that `crew run` ignores.
 
 ```bash
 crew start HRD-442
@@ -278,7 +268,7 @@ crew start HRD-442 --dry-run
 
 ### `crew stop <TICKET>`
 
-Stops a live workspace pane while preserving the ticket worktree and branch. The manual pause button for cases where you need terminal capacity back, want to stop an agent that's going in the wrong direction, or need to inspect the diff before letting another agent continue. (Replaces the deprecated `crew interrupt <TICKET>`.)
+Stops a live workspace pane while preserving the ticket worktree and branch. The manual pause button for cases where you need terminal capacity back, want to stop an agent that's going in the wrong direction, or need to inspect the diff before letting another agent continue.
 
 ```bash
 crew stop HRD-442 --reason "wrong implementation direction"
@@ -368,7 +358,7 @@ To scaffold `.groundcrew/setup.sh` with a coding agent (Claude Code, Cursor, etc
 
 ## Pluggable ticket sources
 
-`sources` declares extra ticket-system adapters. The current release verifies configured extra sources during `crew run` startup; the dispatch loop still reads Linear directly through the built-in Linear adapter until the canonical consumer refactor lands. This lets you validate shell/Jira/local-plan integrations without changing existing Linear behavior.
+`sources` declares extra ticket-system adapters. They're verified at `crew run` startup and dispatched alongside the built-in Linear adapter, so a shell, Jira, or local-plan integration feeds the same orchestration loop as Linear.
 
 The built-in `shell` adapter runs command templates and reads JSON from stdout:
 
@@ -543,11 +533,11 @@ node --run crew -- doctor
 node --run crew:op -- run --watch
 ```
 
-Both forms discover config via cosmiconfig — project-walk from cwd for `crew.config.ts` and friends, then `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/crew.config.ts` (legacy `config.ts` is still accepted for one release). Set `GROUNDCREW_CONFIG` to point elsewhere. The `crew:op` wrapper additionally reads `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/op.env` (1Password env-file with `op://` references resolved at launch).
+Both forms discover config via cosmiconfig — project-walk from cwd for `crew.config.ts` and friends, then `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/crew.config.ts`. Set `GROUNDCREW_CONFIG` to point elsewhere. The `crew:op` wrapper additionally reads `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/op.env` (1Password env-file with `op://` references resolved at launch).
 
 Logs land in `${XDG_STATE_HOME:-$HOME/.local/state}/groundcrew/groundcrew.log` by default (override via `logging.file`).
 
-Source edits in `src/**` are picked up on the next invocation. Requires Node ≥ 24.3 (native `.ts` type stripping).
+Source edits in `src/**` are picked up on the next invocation. Requires Node ≥ 24 (native `.ts` type stripping).
 
 ## License
 
