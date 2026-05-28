@@ -426,6 +426,171 @@ describe("loadConfig", () => {
     );
   });
 
+  it("merges preLaunch through overlay without dropping default cmd/color", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        '  models: { definitions: { claude: { preLaunch: "export FOO=bar" } } },',
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    const config = await loadConfig();
+    expect(config.models.definitions["claude"]?.preLaunch).toBe("export FOO=bar");
+    expect(config.models.definitions["claude"]?.cmd).toContain("claude");
+    expect(config.models.definitions["claude"]?.color).toBe("#C15F3C");
+  });
+
+  it("rejects an empty preLaunch string", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        '  models: { definitions: { claude: { preLaunch: "" } } },',
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      /models\.definitions\.claude\.preLaunch must be a non-empty string/,
+    );
+  });
+
+  it("rejects a whitespace-only preLaunch string", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        String.raw`  models: { definitions: { claude: { preLaunch: "   \n\t " } } },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      /models\.definitions\.claude\.preLaunch must contain non-whitespace characters/,
+    );
+  });
+
+  it("allows preLaunch on a brand-new model when cmd and color are supplied", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        "  models: {",
+        '    definitions: { cursor: { cmd: "cursor-agent", color: "#929292", preLaunch: "export FOO=bar" } },',
+        "  },",
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    const config = await loadConfig();
+    expect(config.models.definitions["cursor"]?.preLaunch).toBe("export FOO=bar");
+  });
+
+  it("merges preLaunchEnv through an override and preserves cmd/color defaults", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        models: {
+          definitions: { claude: { preLaunchEnv: ["SESSION_TOKEN", "TEAM_ID"] } },
+        },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.models.definitions["claude"]?.preLaunchEnv).toStrictEqual([
+      "SESSION_TOKEN",
+      "TEAM_ID",
+    ]);
+    expect(actual.models.definitions["claude"]?.cmd).toBeTypeOf("string");
+    expect(actual.models.definitions["claude"]?.color).toBeTypeOf("string");
+  });
+
+  it("rejects a non-array preLaunchEnv", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        '  models: { definitions: { claude: { preLaunchEnv: "SESSION_TOKEN" } } },',
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /models\.definitions\.claude\.preLaunchEnv must be an array/,
+    );
+  });
+
+  it("rejects a preLaunchEnv entry that isn't a valid POSIX env var name", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        models: { definitions: { claude: { preLaunchEnv: ["SESSION_TOKEN", "1bad"] } } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /models\.definitions\.claude\.preLaunchEnv\[1\] must be a POSIX env var name/,
+    );
+  });
+
+  it("rejects a preLaunchEnv entry that overlaps BUILD_SECRET_NAMES", async () => {
+    // BUILD_SECRET_NAMES are `unset` on the host between the setup wrap and
+    // the agent wrap, so forwarding them via --env-pass would silently never
+    // reach the agent. Fail at config-load time.
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        models: { definitions: { claude: { preLaunchEnv: ["SESSION_TOKEN", "NPM_TOKEN"] } } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /models\.definitions\.claude\.preLaunchEnv\[1\] cannot be a BUILD_SECRET_NAMES entry/,
+    );
+  });
+
+  it("rejects combining disabled: true with preLaunchEnv", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        '  models: { definitions: { claude: { disabled: true, preLaunchEnv: ["SESSION_TOKEN"] } } },',
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(/cannot combine `disabled: true` with other fields/);
+  });
+
   it("trims surrounding whitespace from a per-model sandbox agent", async () => {
     const path = writeConfigFile(
       temporary,

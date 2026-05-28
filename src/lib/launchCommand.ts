@@ -1,7 +1,12 @@
 import { createRequire } from "node:module";
 import { basename, dirname, resolve } from "node:path";
 
-import { BUILD_SECRET_NAMES, type LocalRunner, type ModelDefinition } from "./config.ts";
+import {
+  BUILD_SECRET_NAMES,
+  hasPreLaunchEnv,
+  type LocalRunner,
+  type ModelDefinition,
+} from "./config.ts";
 import { shellSingleQuote } from "./shell.ts";
 
 export { shellSingleQuote } from "./shell.ts";
@@ -51,6 +56,10 @@ function renderAgentCommand(arguments_: {
     .replaceAll("{{sandbox}}", shellSingleQuote(arguments_.sandboxName));
 }
 
+function renderPreLaunch(preLaunch: string, worktreeDir: string): string {
+  return preLaunch.replaceAll("{{worktree}}", shellSingleQuote(worktreeDir));
+}
+
 function setupWithStatusReporting(setupCommand: string): string {
   return [
     setupCommand,
@@ -68,8 +77,60 @@ function sourceSecretsLine(secretsFile: string): string {
   return `if [ -f ${shellSingleQuote(secretsFile)} ]; then set -a && . ${shellSingleQuote(secretsFile)} && set +a; fi`;
 }
 
+function unsetEnvironmentLine(names: readonly string[]): string {
+  return `unset ${[...new Set(names)].join(" ")}`;
+}
+
 function unsetSecretsLine(): string {
-  return `unset ${BUILD_SECRET_NAMES.join(" ")}`;
+  return unsetEnvironmentLine(BUILD_SECRET_NAMES);
+}
+
+function trapCleanupLine(promptDir: string): string {
+  const cleanupCmd = `rm -rf ${shellSingleQuote(promptDir)}`;
+  return `trap ${shellSingleQuote(cleanupCmd)} EXIT`;
+}
+
+/**
+ * Shared head of every host-shell `&&` chain: arm the `EXIT` trap that wipes
+ * `promptDir` (must come before any link that can fail, including the `cd`),
+ * then `cd` into the worktree. Kept separate from secret sourcing so the
+ * safehouse path can splice `preLaunch` between the `cd` and the secrets
+ * source — preLaunch must never see build-time secrets in env.
+ */
+function hostTrapAndCd(arguments_: { worktreeDir: string; promptDir: string }): string[] {
+  return [trapCleanupLine(arguments_.promptDir), `cd ${shellSingleQuote(arguments_.worktreeDir)}`];
+}
+
+/**
+ * Optional source-of-secrets line. Returns `[]` when no `secretsFile` is
+ * staged so callers can splat the result into their chain unconditionally.
+ */
+function hostSourceSecrets(secretsFile: string | undefined): string[] {
+  return secretsFile === undefined ? [] : [sourceSecretsLine(secretsFile)];
+}
+
+/**
+ * Shared tail of every host-shell `&&` chain: optional `preLaunch`, then the
+ * staged prompt read, the explicit success-path `rm -rf` (the trap covers the
+ * failure path), and the final `exec` of whatever wraps (or is) the agent.
+ */
+function preLaunchPromptAndExec(arguments_: {
+  definition: ModelDefinition;
+  worktreeDir: string;
+  promptFile: string;
+  promptDir: string;
+  execLine: string;
+}): string[] {
+  const lines: string[] = [];
+  if (arguments_.definition.preLaunch !== undefined) {
+    lines.push(renderPreLaunch(arguments_.definition.preLaunch, arguments_.worktreeDir));
+  }
+  lines.push(
+    `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
+    `rm -rf ${shellSingleQuote(arguments_.promptDir)}`,
+    arguments_.execLine,
+  );
+  return lines;
 }
 
 function tokenizeShellPrefix(command: string): string[] {
@@ -189,10 +250,28 @@ interface LaunchCommandArguments {
  */
 export function buildLaunchCommand(arguments_: LaunchCommandArguments): string {
   if (arguments_.runner === "sdx") {
+    if (arguments_.definition.preLaunch !== undefined) {
+      throw new Error(
+        "preLaunch is not yet supported for runner='sdx'. Set local.runner to 'safehouse' or 'none', or open an issue for sdx support.",
+      );
+    }
+    if (hasPreLaunchEnv(arguments_.definition)) {
+      throw new Error(
+        "preLaunchEnv is not yet supported for runner='sdx'. Set local.runner to 'safehouse' or 'none', or open an issue for sdx support.",
+      );
+    }
     return buildSdxLaunchCommand(arguments_);
   }
   if (shouldWrapWithSafehouse(arguments_)) {
     return buildSafehouseLaunchCommand(arguments_);
+  }
+  if (hasPreLaunchEnv(arguments_.definition) && arguments_.runner === "safehouse") {
+    // `runner === "safehouse"` but `cmd` already starts with `safehouse` — the
+    // user owns env forwarding in that case, so there's no wrap flag for us to
+    // inject into. Fail loudly instead of silently dropping the contract.
+    throw new Error(
+      "preLaunchEnv cannot be injected when `cmd` starts with `safehouse` — your cmd owns the wrap, so add the names to its own `--env-pass=` flag, or drop the `safehouse` prefix from `cmd` to let groundcrew compose the flag for you.",
+    );
   }
   return buildUnwrappedHostLaunchCommand(arguments_);
 }
@@ -223,35 +302,53 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
     sandboxName: "",
   });
 
-  const lines: string[] = [`cd ${shellSingleQuote(arguments_.worktreeDir)}`];
-  if (arguments_.secretsFile !== undefined) {
-    lines.push(sourceSecretsLine(arguments_.secretsFile));
-  }
-  lines.push(setupWithStatusReporting(SETUP_COMMAND));
+  const lines = [
+    ...hostTrapAndCd({ worktreeDir: arguments_.worktreeDir, promptDir }),
+    ...hostSourceSecrets(arguments_.secretsFile),
+    setupWithStatusReporting(SETUP_COMMAND),
+  ];
   if (arguments_.secretsFile !== undefined) {
     lines.push(unsetSecretsLine());
   }
   lines.push(
-    `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
-    `rm -rf ${shellSingleQuote(promptDir)}`,
-    `exec ${agentCmd} "$_p"`,
+    ...preLaunchPromptAndExec({
+      definition: arguments_.definition,
+      worktreeDir: arguments_.worktreeDir,
+      promptFile: arguments_.promptFile,
+      promptDir,
+      execLine: `exec ${agentCmd} "$_p"`,
+    }),
   );
   return lines.join(" && ");
 }
 
 /**
- * Safehouse launch. Setup runs *inside* a plain `safehouse-clearance` wrap
- * (mirroring the sdx runner) so the repo's `.groundcrew/setup.sh` and its
- * `npm install` are filesystem-isolated and egress-restricted without inheriting
- * agent credentials/state grants. The agent then runs in a second Safehouse wrap
- * through an agent-named shim so Safehouse can select only the agent profile.
+ * Safehouse launch. Two Safehouse wraps, by design:
  *
- * Build secrets are sourced into the host launch shell so Safehouse can forward
- * them into the sandbox via `--env-pass` (Safehouse's `--env=FILE` mode otherwise
- * strips them); they're `unset` on the host after setup and not passed to the
- * agent wrap. The host keeps `cd`, the prompt read, and a temporary
- * command-named shim so Safehouse can select the intended agent profile while
- * the actual agent command remains `sh -c`.
+ *   1. **Setup wrap**: plain `safehouse-clearance ... sh -c '<setup>'`. Runs
+ *      `.groundcrew/setup.sh --deps-only` filesystem-isolated and
+ *      egress-restricted, **without** inheriting agent-profile grants.
+ *   2. **Agent wrap**: `safehouse-clearance "$shim" -c '<exec agent>' sh "$_p"`
+ *      where `$shim` is a `mktemp`-d symlink to `/bin/sh` named after the
+ *      agent (e.g. `claude`). Safehouse selects the matching agent profile
+ *      from the wrapped command's basename (`claude-code.sb` etc.) without
+ *      needing every agent profile enabled globally.
+ *
+ * Host ordering matters: when a `preLaunch` hook is present, inherited
+ * build-secret names and listed `preLaunchEnv` names are cleared before it runs.
+ * That keeps the credential-minting snippet from seeing build-time secrets in
+ * env — neither inherited values (the launch shell inherits groundcrew's env,
+ * from which `stageBuildSecrets` reads them) nor file-sourced values — and keeps
+ * stale same-named ambient credentials from being forwarded. `secrets.env` is
+ * then sourced into the host launch shell so Safehouse can forward build secrets
+ * into the **setup wrap** via `--env-pass=` (Safehouse's `--env=FILE` mode strips
+ * them otherwise). After setup returns, `BUILD_SECRET_NAMES` are `unset` again
+ * on the host so they cannot reach the agent wrap.
+ *
+ * `--env-pass` composition is split per wrap (deliberate, post PR #128):
+ * - Setup wrap forwards build secrets only.
+ * - Agent wrap forwards `preLaunchEnv` names only. preLaunch credentials never
+ *   reach the profile-neutral setup phase.
  */
 function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string {
   const promptDir = dirname(arguments_.promptFile);
@@ -265,33 +362,55 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   const setupCommand = setupWithStatusReporting(SETUP_COMMAND);
   const agentCommand = `exec ${agentCmd} "$@"`;
 
-  // Trailing space keeps the flag and setup command separated; empty when no secrets.
-  const envPassFlag =
+  // Split --env-pass per wrap: the setup wrap only needs build secrets (so
+  // `npm install` etc. can authenticate); the agent wrap only needs the
+  // user's preLaunchEnv (build secrets are `unset` on the host between the
+  // two wraps, so forwarding them here would silently no-op). Keeps preLaunch
+  // credentials out of the profile-neutral setup phase — see PR #128.
+  // Trailing space keeps each flag separated from the next argv token.
+  const setupEnvPassFlag =
     arguments_.secretsFile === undefined ? "" : `--env-pass=${BUILD_SECRET_NAMES.join(",")} `;
+  const preLaunchEnvNames = arguments_.definition.preLaunchEnv ?? [];
+  const agentEnvPassFlag =
+    preLaunchEnvNames.length === 0 ? "" : `--env-pass=${preLaunchEnvNames.join(",")} `;
   const safehouseWrapper = shellSingleQuote(SAFEHOUSE_CLEARANCE_WRAPPER_PATH);
 
-  const lines: string[] = [`cd ${shellSingleQuote(arguments_.worktreeDir)}`];
-  if (arguments_.secretsFile !== undefined) {
-    lines.push(sourceSecretsLine(arguments_.secretsFile));
+  // Defensive shim+promptDir trap: by the time we arm it, `rm -rf <promptDir>`
+  // has already run (line below) so the promptDir wipe is a no-op on the happy
+  // path. Keeps the failure-window between shim creation and the explicit
+  // post-wrap cleanup covered for both targets without an unarmed window.
+  const shimAndPromptCleanup = `rm -rf "$_safehouse_shim_dir"; rm -rf ${shellSingleQuote(promptDir)}`;
+  const shimAndPromptTrap = `trap ${shellSingleQuote(shimAndPromptCleanup)} EXIT`;
+
+  const lines = hostTrapAndCd({ worktreeDir: arguments_.worktreeDir, promptDir });
+  if (arguments_.definition.preLaunch !== undefined) {
+    // Scrub inherited env before preLaunch runs. `stageBuildSecrets` copies
+    // build secrets out of `process.env`, and the launch shell inherits that
+    // env, so source-after-preLaunch is not enough by itself. Clearing
+    // preLaunchEnv names here also prevents stale same-named ambient values
+    // from being forwarded if the hook forgets to overwrite them.
+    lines.push(unsetEnvironmentLine([...BUILD_SECRET_NAMES, ...preLaunchEnvNames]));
+    lines.push(renderPreLaunch(arguments_.definition.preLaunch, arguments_.worktreeDir));
   }
   lines.push(
+    ...hostSourceSecrets(arguments_.secretsFile),
     `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
     `rm -rf ${shellSingleQuote(promptDir)}`,
-    `${safehouseWrapper} ${envPassFlag}sh -c ${shellSingleQuote(setupCommand)}`,
+    `${safehouseWrapper} ${setupEnvPassFlag}sh -c ${shellSingleQuote(setupCommand)}`,
   );
   if (arguments_.secretsFile !== undefined) {
     lines.push(unsetSecretsLine());
   }
   lines.push(
     `_safehouse_shim_dir=$(mktemp -d "\${TMPDIR:-/tmp}/groundcrew-safehouse-XXXXXX")`,
-    `trap 'rm -rf "$_safehouse_shim_dir"' EXIT`,
+    shimAndPromptTrap,
     `_safehouse_shim="$_safehouse_shim_dir/${safehouseCommandName}"`,
     `ln -s /bin/sh "$_safehouse_shim"`,
     // Safehouse selects an agent profile from the wrapped command's basename.
     // Running the real launch chain as `sh -c` would make it see `sh`, so use
     // an agent-named symlink to /bin/sh. This preserves per-agent profile
     // selection without enabling every agent profile.
-    `${safehouseWrapper} "$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh "$_p"; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir"; trap - EXIT; exit "$_safehouse_status"`,
+    `{ ${safehouseWrapper} ${agentEnvPassFlag}"$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh "$_p"; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir"; trap - EXIT; exit "$_safehouse_status"; }`,
   );
   return lines.join(" && ");
 }
@@ -324,7 +443,7 @@ function buildSdxLaunchCommand(arguments_: LaunchCommandArguments): string {
     arguments_.secretsFile === undefined
       ? ""
       : `${BUILD_SECRET_NAMES.map((name) => `-e ${name}`).join(" ")} `;
-  const lines: string[] = [];
+  const lines: string[] = [trapCleanupLine(promptDir)];
   if (arguments_.secretsFile !== undefined) {
     lines.push(sourceSecretsLine(arguments_.secretsFile));
   }

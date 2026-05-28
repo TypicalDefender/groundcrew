@@ -10,6 +10,8 @@ import type { ShellAdapterConfig } from "./adapters/shell/schema.ts";
 import { log, readEnvironmentVariable, setLogFile } from "./util.ts";
 import { xdgConfigPath, xdgStatePath } from "./xdg.ts";
 
+import { BUILD_SECRET_NAMES } from "./buildSecrets.ts";
+
 export { BUILD_SECRET_NAMES } from "./buildSecrets.ts";
 
 /**
@@ -92,6 +94,30 @@ export interface ModelDefinition {
    * Groundcrew adds the Safehouse wrapper.
    */
   cmd: string;
+  /**
+   * Optional shell snippet run in the launch shell **before** the agent is
+   * exec'd and **outside** Safehouse/sdx. Use to mint short-lived credentials
+   * (e.g. `export SESSION_TOKEN=...`) that the wrapped `cmd` inherits via
+   * the process environment. `{{worktree}}` is replaced before launch.
+   * Failures abort launch (unlike deps setup, which logs and continues).
+   * Not supported for `local.runner` `sdx` in v1.
+   */
+  preLaunch?: string;
+  /**
+   * Optional list of env var names to forward from the launch shell into
+   * the agent under the safehouse runner. Companion to `preLaunch` —
+   * names exported by `preLaunch` go here so groundcrew appends them to
+   * the `safehouse-clearance` wrap's `--env-pass=` flag, preserving the
+   * project's egress allowlist (`clearance-allow-hosts`) without forcing
+   * the user to rewrite `cmd`. Under `local.runner: "none"` exports flow
+   * through unchanged, so `preLaunchEnv` is a no-op. An empty array is a
+   * uniform no-op in every runner (it forwards zero names, so the
+   * unsupported-runner guards do not fire). A non-empty list is rejected
+   * when `local.runner` resolves to `sdx` in v1, and when `cmd` already
+   * starts with `safehouse` (the user owns env forwarding in that case).
+   * Each name must match `[A-Za-z_][A-Za-z0-9_]*` (POSIX env var name).
+   */
+  preLaunchEnv?: string[];
   color: string;
   usage?: {
     codexbar: { provider: string; source?: string };
@@ -365,6 +391,47 @@ function normalizeOptionalString(value: unknown, path: string): string | undefin
   return value.trim();
 }
 
+const ENV_VAR_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function validatePreLaunchEnv(modelName: string, value: unknown): asserts value is string[] {
+  const path = `models.definitions.${modelName}.preLaunchEnv`;
+  if (!Array.isArray(value)) {
+    fail(`${path} must be an array of env var names (got ${JSON.stringify(value)})`);
+  }
+  for (const [index, entry] of value.entries()) {
+    if (typeof entry !== "string" || !ENV_VAR_NAME_PATTERN.test(entry)) {
+      fail(
+        `${path}[${index}] must be a POSIX env var name matching ${ENV_VAR_NAME_PATTERN.source} (got ${JSON.stringify(entry)})`,
+      );
+    }
+    // Build secrets are sourced into the host launch shell, forwarded only to
+    // the Safehouse *setup* wrap, and `unset` on the host before the agent
+    // wrap is exec'd. Listing one here would silently never reach the agent —
+    // fail loudly so the operator picks a different name (or removes the
+    // entry) instead of debugging a missing env var at runtime.
+    if ((BUILD_SECRET_NAMES as readonly string[]).includes(entry)) {
+      fail(
+        `${path}[${index}] cannot be a BUILD_SECRET_NAMES entry (${BUILD_SECRET_NAMES.join(", ")}); ` +
+          "those are unset on the host before the agent wrap is exec'd, so forwarding them via --env-pass would be a no-op.",
+      );
+    }
+  }
+}
+
+/**
+ * Single source of truth for "is preLaunchEnv asking us to forward anything?"
+ *
+ * An empty array forwards zero names, so it is a uniform no-op in every
+ * runner. The unsupported-runner guards (sdx, safehouse-prefixed cmd) only
+ * fire when there is actually something to forward — rejecting `[]` only on
+ * those runners would make an empty list accepted under `safehouse`/`none`
+ * but fatal elsewhere, which is a worse asymmetry than what the helper
+ * collapses. Centralized so all four call sites stay in lockstep.
+ */
+export function hasPreLaunchEnv(definition: Pick<ModelDefinition, "preLaunchEnv">): boolean {
+  return definition.preLaunchEnv !== undefined && definition.preLaunchEnv.length > 0;
+}
+
 function isWorkspaceKindSetting(value: unknown): value is WorkspaceKindSetting {
   return (
     typeof value === "string" && (WORKSPACE_KIND_SETTINGS as readonly string[]).includes(value)
@@ -454,9 +521,9 @@ function failIfLegacyModelKeys(
         `models.definitions.${name}.disabled must be exactly \`true\` when set (got ${JSON.stringify(override["disabled"])})`,
       );
     }
-    const conflicting = (["cmd", "color", "usage", "sandbox"] as const).filter((key) =>
-      Object.hasOwn(override, key),
-    );
+    const conflicting = (
+      ["cmd", "color", "usage", "sandbox", "preLaunch", "preLaunchEnv"] as const
+    ).filter((key) => Object.hasOwn(override, key));
     if (conflicting.length > 0) {
       fail(
         `models.definitions.${name}: cannot combine \`disabled: true\` with other fields (${conflicting.join(", ")}). Either disable the model or override its fields, not both.`,
@@ -483,6 +550,41 @@ export function isShippedDefaultDisabled(
 
 function isUsageDisableSentinel(usage: UserUsage): usage is { disabled: true } {
   return isPlainObject(usage) && "disabled" in usage && usage.disabled;
+}
+
+function buildOverrideCandidate(
+  name: string,
+  override: EnabledUserModelDefinition,
+  existing: ModelDefinition | undefined,
+): Partial<ModelDefinition> {
+  const base: Partial<ModelDefinition> =
+    existing === undefined ? {} : cloneModelDefinition(existing);
+  // Per-key spread so overriding `cmd` alone preserves the default
+  // `color` / `usage`. Brand-new entries must supply both required fields.
+  const candidate: Partial<ModelDefinition> = { ...base };
+  if (override.cmd !== undefined) {
+    candidate.cmd = override.cmd;
+  }
+  if (override.color !== undefined) {
+    candidate.color = override.color;
+  }
+  if (override.usage !== undefined) {
+    if (isUsageDisableSentinel(override.usage)) {
+      delete candidate.usage;
+    } else {
+      candidate.usage = override.usage;
+    }
+  }
+  if (override.sandbox !== undefined) {
+    candidate.sandbox = normalizeSandbox(override.sandbox, `models.definitions.${name}.sandbox`);
+  }
+  if (override.preLaunch !== undefined) {
+    candidate.preLaunch = override.preLaunch;
+  }
+  if (override.preLaunchEnv !== undefined) {
+    candidate.preLaunchEnv = override.preLaunchEnv;
+  }
+  return candidate;
 }
 
 function mergeDefinitions(
@@ -514,28 +616,8 @@ function mergeDefinitions(
       continue;
     }
 
-    const base: Partial<ModelDefinition> =
-      merged[name] === undefined ? {} : cloneModelDefinition(merged[name]);
-    // Per-key spread so overriding `cmd` alone preserves the default
-    // `color` / `usage`. Brand-new entries must supply both required fields.
-    const candidate: Partial<ModelDefinition> = { ...base };
-    if (override.cmd !== undefined) {
-      candidate.cmd = override.cmd;
-    }
-    if (override.color !== undefined) {
-      candidate.color = override.color;
-    }
-    if (override.usage !== undefined) {
-      if (isUsageDisableSentinel(override.usage)) {
-        delete candidate.usage;
-      } else {
-        candidate.usage = override.usage;
-      }
-    }
-    if (override.sandbox !== undefined) {
-      candidate.sandbox = normalizeSandbox(override.sandbox, `models.definitions.${name}.sandbox`);
-    }
-    const { cmd, color, usage, sandbox } = candidate;
+    const candidate = buildOverrideCandidate(name, override, merged[name]);
+    const { cmd, color, usage, sandbox, preLaunch, preLaunchEnv } = candidate;
     if (typeof cmd !== "string" || cmd.length === 0) {
       fail(`models.definitions.${name}.cmd must be a non-empty string`);
     }
@@ -548,6 +630,12 @@ function mergeDefinitions(
     }
     if (sandbox !== undefined) {
       definition.sandbox = sandbox;
+    }
+    if (preLaunch !== undefined) {
+      definition.preLaunch = preLaunch;
+    }
+    if (preLaunchEnv !== undefined) {
+      definition.preLaunchEnv = preLaunchEnv;
     }
     merged[name] = definition;
   }
@@ -754,6 +842,15 @@ function validate(config: ResolvedConfig): void {
     }
     if (definition.sandbox !== undefined) {
       requireString(definition.sandbox.agent, `models.definitions.${name}.sandbox.agent`);
+    }
+    if (definition.preLaunch !== undefined) {
+      requireString(definition.preLaunch, `models.definitions.${name}.preLaunch`);
+      if (definition.preLaunch.trim().length === 0) {
+        fail(`models.definitions.${name}.preLaunch must contain non-whitespace characters`);
+      }
+    }
+    if (definition.preLaunchEnv !== undefined) {
+      validatePreLaunchEnv(name, definition.preLaunchEnv);
     }
   }
 

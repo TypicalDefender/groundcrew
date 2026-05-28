@@ -61,6 +61,16 @@ export default {
   //       cmd: "cursor-agent",
   //       color: "#929292",
   //     },
+  //     // Optional: mint a short-lived credential outside Safehouse and
+  //     // forward it into the agent. `preLaunch` runs in the launch shell
+  //     // before the agent exec; `preLaunchEnv` lists the names to add to
+  //     // groundcrew's `safehouse-clearance --env-pass=` flag so the wrap's
+  //     // egress allowlist stays intact. Chain with `&&` so a failed mint
+  //     // aborts launch before `export`.
+  //     // claude: {
+  //     //   preLaunch: "SESSION_TOKEN=$(your-mint-command) && export SESSION_TOKEN",
+  //     //   preLaunchEnv: ["SESSION_TOKEN"],
+  //     // },
   //     // To run a model under the sdx (Docker Sandboxes) runner, bind it to
   //     // an sbx agent. Required when `local.runner` resolves to `sdx`.
   //     // claude: { sandbox: { agent: "claude" } },

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { ModelDefinition } from "./config.ts";
+import { BUILD_SECRET_NAMES, type ModelDefinition } from "./config.ts";
 import {
   buildLaunchCommand,
   resolveSafehouseClearancePath,
@@ -107,7 +107,14 @@ describe(buildLaunchCommand, () => {
 
     expect(out).toContain('_safehouse_shim_dir=$(mktemp -d "');
     expect(out).toContain('/groundcrew-safehouse-XXXXXX")');
-    expect(out).toContain("trap 'rm -rf \"$_safehouse_shim_dir\"' EXIT");
+    // Combined EXIT trap covers both the shim dir (introduced by main's #128
+    // two-wrap design) and promptDir (introduced by this branch's preLaunch
+    // failure-cleanup work). promptDir is wiped explicitly before the setup
+    // wrap, so its inclusion here is defensive — keeps a single trap covering
+    // every failure window between shim creation and the post-wrap cleanup.
+    expect(out).toContain(
+      String.raw`trap 'rm -rf "$_safehouse_shim_dir"; rm -rf '\''/tmp/prompt-team-1'\''' EXIT`,
+    );
     expect(out).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
     expect(out).toContain('ln -s /bin/sh "$_safehouse_shim"');
     expect(out).toContain('"$_safehouse_shim" -c');
@@ -332,6 +339,516 @@ describe(buildLaunchCommand, () => {
       expect(setupIndex).toBeGreaterThan(sourceIndex);
       expect(unsetIndex).toBeGreaterThan(setupIndex);
       expect(execIndex).toBeGreaterThan(unsetIndex);
+      expect(out).not.toContain("--env-pass");
+    });
+  });
+
+  describe("EXIT-trap promptDir cleanup", () => {
+    it("arms the `trap 'rm -rf <promptDir>' EXIT` before `cd` so a failed `cd` still wipes promptDir", () => {
+      const out = buildLaunchCommand(arguments_());
+
+      expect(out).toContain(String.raw`trap 'rm -rf '\''/tmp/prompt-team-1'\''' EXIT`);
+      const trapIndex = out.indexOf("trap 'rm -rf");
+      const cdIndex = out.indexOf("cd '/work/repo-a-team-1'");
+      const setupIndex = out.indexOf("setup_status=$?");
+      expect(trapIndex).toBeGreaterThan(-1);
+      expect(cdIndex).toBeGreaterThan(trapIndex);
+      expect(setupIndex).toBeGreaterThan(cdIndex);
+    });
+
+    it("includes the same trap as the first link of the sdx chain", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          definition: { cmd: "claude", color: "#fff", sandbox: { agent: "claude" } },
+          runner: "sdx",
+          sandboxName: "groundcrew-claude",
+        }),
+      );
+
+      expect(out).toMatch(/^trap 'rm -rf '\\''\/tmp\/prompt-team-1'\\''' EXIT/);
+    });
+
+    it("double-escapes apostrophes in promptDir so the trap arg survives both quote layers", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          promptFile: "/tmp/it's-fine/prompt.txt",
+        }),
+      );
+
+      expect(out).toContain(String.raw`trap 'rm -rf '\''/tmp/it'\''\'\'''\''s-fine'\''' EXIT`);
+    });
+
+    it("wipes promptDir when preLaunch fails before the explicit `rm -rf` would run", () => {
+      const promptDir = mkdtempSync(join(tmpdir(), "groundcrew-trap-cleanup-"));
+      const promptFile = join(promptDir, "prompt.txt");
+      const secretsFile = join(promptDir, "secrets.env");
+      const worktreeDir = mkdtempSync(join(tmpdir(), "groundcrew-trap-worktree-"));
+      try {
+        writeFileSync(promptFile, "the prompt body\n");
+        writeFileSync(secretsFile, "NPM_TOKEN='leaked'\n");
+
+        const out = buildLaunchCommand(
+          arguments_({
+            runner: "none",
+            promptFile,
+            worktreeDir,
+            secretsFile,
+            definition: {
+              cmd: "echo never-reached",
+              color: "#fff",
+              preLaunch: "exit 7",
+            },
+          }),
+        );
+
+        const result = spawnSync("sh", ["-c", out]);
+        expect(result.status).toBe(7);
+        expect(() => statSync(promptDir)).toThrow(/ENOENT/);
+      } finally {
+        rmSync(promptDir, { recursive: true, force: true });
+        rmSync(worktreeDir, { recursive: true, force: true });
+      }
+    });
+
+    it("wipes promptDir under the safehouse runner when preLaunch fails before the wrap exec", () => {
+      const promptDir = mkdtempSync(join(tmpdir(), "groundcrew-trap-safehouse-"));
+      const promptFile = join(promptDir, "prompt.txt");
+      const worktreeDir = mkdtempSync(join(tmpdir(), "groundcrew-trap-safehouse-wt-"));
+      try {
+        writeFileSync(promptFile, "the prompt body\n");
+
+        const out = buildLaunchCommand(
+          arguments_({
+            runner: "safehouse",
+            promptFile,
+            worktreeDir,
+            definition: {
+              cmd: "echo never-reached",
+              color: "#fff",
+              preLaunch: "exit 9",
+            },
+          }),
+        );
+
+        // preLaunch aborts before the `exec safehouse-clearance …` link, so we
+        // never invoke the real wrapper here — the EXIT trap is what we're
+        // proving fires.
+        const result = spawnSync("sh", ["-c", out]);
+        expect(result.status).toBe(9);
+        expect(() => statSync(promptDir)).toThrow(/ENOENT/);
+      } finally {
+        rmSync(promptDir, { recursive: true, force: true });
+        rmSync(worktreeDir, { recursive: true, force: true });
+      }
+    });
+
+    it("wipes promptDir under the safehouse runner when preLaunch returns non-zero", () => {
+      const promptDir = mkdtempSync(join(tmpdir(), "groundcrew-trap-safehouse-status-"));
+      const promptFile = join(promptDir, "prompt.txt");
+      const secretsFile = join(promptDir, "secrets.env");
+      const worktreeDir = mkdtempSync(join(tmpdir(), "groundcrew-trap-safehouse-status-wt-"));
+      try {
+        writeFileSync(promptFile, "the prompt body\n");
+        writeFileSync(secretsFile, "NPM_TOKEN='leaked'\n");
+
+        const out = buildLaunchCommand(
+          arguments_({
+            runner: "safehouse",
+            promptFile,
+            worktreeDir,
+            secretsFile,
+            definition: {
+              cmd: "echo never-reached",
+              color: "#fff",
+              preLaunch: "SESSION_TOKEN=$(false) && export SESSION_TOKEN",
+            },
+          }),
+        );
+
+        const result = spawnSync("sh", ["-c", out]);
+        expect(result.status).toBe(1);
+        expect(() => statSync(promptDir)).toThrow(/ENOENT/);
+      } finally {
+        rmSync(promptDir, { recursive: true, force: true });
+        rmSync(worktreeDir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe("preLaunch", () => {
+    const baseline = buildLaunchCommand(arguments_());
+
+    it("is deterministic when preLaunch is undefined (same launch string across calls)", () => {
+      const out = buildLaunchCommand(arguments_());
+
+      expect(out).toBe(baseline);
+    });
+
+    it("runs preLaunch on the host before sourcing build secrets so the minting snippet never sees NPM_TOKEN / BUF_TOKEN (safehouse)", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          definition: {
+            cmd: "claude",
+            color: "#fff",
+            preLaunch: "export FOO=bar",
+          },
+          secretsFile: "/tmp/prompt-team-1/secrets.env",
+        }),
+      );
+
+      const cdIndex = out.indexOf("cd '/work/repo-a-team-1'");
+      const preLaunchIndex = out.indexOf("export FOO=bar");
+      const sourceIndex = out.indexOf(". '/tmp/prompt-team-1/secrets.env'");
+      const readPromptIndex = out.indexOf("_p=$(cat '/tmp/prompt-team-1/prompt.txt')");
+      const setupWrapIndex = out.indexOf("safehouse-clearance");
+      // Two `unset NPM_TOKEN BUF_TOKEN` occurrences now: the first scrubs the
+      // inherited env before preLaunch, the last clears the file-sourced
+      // values between the setup and agent wraps.
+      const scrubUnsetIndex = out.indexOf("unset NPM_TOKEN BUF_TOKEN");
+      const betweenWrapsUnsetIndex = out.lastIndexOf("unset NPM_TOKEN BUF_TOKEN");
+      const agentWrapIndex = out.indexOf('"$_safehouse_shim" -c');
+      // trap → cd → unset (scrub inherited) → preLaunch → source secrets.env →
+      //   read prompt → setup wrap → host-side unset → agent wrap. The scrub
+      // runs before preLaunch so it sees neither inherited nor sourced build
+      // secrets; the between-wraps unset keeps them off the agent wrap (#128).
+      expect(cdIndex).toBeGreaterThan(-1);
+      expect(scrubUnsetIndex).toBeGreaterThan(cdIndex);
+      expect(preLaunchIndex).toBeGreaterThan(scrubUnsetIndex);
+      expect(sourceIndex).toBeGreaterThan(preLaunchIndex);
+      expect(readPromptIndex).toBeGreaterThan(sourceIndex);
+      expect(setupWrapIndex).toBeGreaterThan(readPromptIndex);
+      expect(betweenWrapsUnsetIndex).toBeGreaterThan(setupWrapIndex);
+      expect(agentWrapIndex).toBeGreaterThan(betweenWrapsUnsetIndex);
+      // No build-secret *values* are sourced into env before preLaunch runs.
+      expect(out.slice(0, preLaunchIndex)).not.toContain(". '/tmp/prompt-team-1/secrets.env'");
+    });
+
+    it("scrubs build secrets inherited from the launching env so preLaunch cannot read NPM_TOKEN / BUF_TOKEN (safehouse)", () => {
+      // stageBuildSecrets copies build secrets out of groundcrew's own
+      // process env, which the launch shell inherits. Sourcing secrets.env
+      // after preLaunch is not enough on its own — the inherited values are
+      // already in env. Simulate that here by seeding NPM_TOKEN / BUF_TOKEN in
+      // the spawn env. preLaunch always aborts before the real wrapper and
+      // encodes leak (11) vs clean (22) in its exit code.
+      const promptDir = mkdtempSync(join(tmpdir(), "groundcrew-inherit-"));
+      const promptFile = join(promptDir, "prompt.txt");
+      const secretsFile = join(promptDir, "secrets.env");
+      const worktreeDir = mkdtempSync(join(tmpdir(), "groundcrew-inherit-wt-"));
+      try {
+        writeFileSync(promptFile, "the prompt body\n");
+        writeFileSync(secretsFile, "NPM_TOKEN='from-file'\nBUF_TOKEN='from-file'\n");
+
+        const out = buildLaunchCommand(
+          arguments_({
+            runner: "safehouse",
+            promptFile,
+            worktreeDir,
+            secretsFile,
+            definition: {
+              cmd: "echo never-reached",
+              color: "#fff",
+              // Aborts before the real wrapper (and any external command), so
+              // only shell builtins run: leak -> exit 11, clean -> exit 22.
+              preLaunch: 'if [ -n "$NPM_TOKEN" ] || [ -n "$BUF_TOKEN" ]; then exit 11; fi; exit 22',
+            },
+          }),
+        );
+
+        const result = spawnSync("sh", ["-c", out], {
+          // Seed the build secrets in the spawn env to simulate the launch
+          // shell inheriting them from groundcrew. A fixed PATH avoids
+          // depending on the parent env (and the lint ban on `process.env`).
+          env: {
+            PATH: "/usr/bin:/bin",
+            NPM_TOKEN: "inherited-secret",
+            BUF_TOKEN: "inherited-secret",
+          },
+        });
+        expect(result.status).toBe(22);
+      } finally {
+        rmSync(promptDir, { recursive: true, force: true });
+        rmSync(worktreeDir, { recursive: true, force: true });
+      }
+    });
+
+    it("scrubs listed preLaunchEnv names before preLaunch so stale ambient values are not forwarded", () => {
+      const promptDir = mkdtempSync(join(tmpdir(), "groundcrew-prelaunch-pass-scrub-"));
+      const promptFile = join(promptDir, "prompt.txt");
+      const worktreeDir = mkdtempSync(join(tmpdir(), "groundcrew-prelaunch-pass-scrub-wt-"));
+      try {
+        writeFileSync(promptFile, "the prompt body\n");
+
+        const out = buildLaunchCommand(
+          arguments_({
+            runner: "safehouse",
+            promptFile,
+            worktreeDir,
+            definition: {
+              cmd: "echo never-reached",
+              color: "#fff",
+              preLaunch: `[ -z "\${SESSION_TOKEN-}" ] || exit 41; exit 42`,
+              preLaunchEnv: ["SESSION_TOKEN"],
+            },
+          }),
+        );
+
+        const scrubIndex = out.indexOf("unset NPM_TOKEN BUF_TOKEN SESSION_TOKEN");
+        const preLaunchIndex = out.indexOf(`[ -z "\${SESSION_TOKEN-}" ]`);
+        const agentEnvPassIndex = out.indexOf("--env-pass=SESSION_TOKEN");
+        expect(scrubIndex).toBeGreaterThan(-1);
+        expect(preLaunchIndex).toBeGreaterThan(scrubIndex);
+        expect(agentEnvPassIndex).toBeGreaterThan(preLaunchIndex);
+
+        const actual = spawnSync("sh", ["-c", out], {
+          env: { PATH: "/bin:/usr/bin", SESSION_TOKEN: "stale-token" },
+        });
+        expect(actual.status).toBe(42);
+        expect(() => statSync(promptDir)).toThrow(/ENOENT/);
+      } finally {
+        rmSync(promptDir, { recursive: true, force: true });
+        rmSync(worktreeDir, { recursive: true, force: true });
+      }
+    });
+
+    it("runs preLaunch without double-wrapping when cmd already starts with safehouse", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          definition: {
+            cmd: "safehouse claude",
+            color: "#fff",
+            preLaunch: "export FOO=bar",
+          },
+        }),
+      );
+
+      expect(out).toContain("export FOO=bar");
+      expect(out).toMatch(/exec safehouse claude "\$_p"$/);
+      expect(out).not.toContain("safehouse safehouse");
+    });
+
+    it("runs preLaunch with runner='none' without the safehouse wrapper", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          runner: "none",
+          definition: {
+            cmd: "claude",
+            color: "#fff",
+            preLaunch: "export FOO=bar",
+          },
+        }),
+      );
+
+      expect(out).toContain("export FOO=bar");
+      expect(out).not.toContain("safehouse-clearance");
+      expect(out).toMatch(/exec claude "\$_p"$/);
+    });
+
+    it("runs preLaunch after build-secret unset on the unwrapped host path (runner='none' + secretsFile)", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          runner: "none",
+          definition: {
+            cmd: "claude",
+            color: "#fff",
+            preLaunch: "export FOO=bar",
+          },
+          secretsFile: "/tmp/prompt-team-1/secrets.env",
+        }),
+      );
+
+      const sourceIndex = out.indexOf(". '/tmp/prompt-team-1/secrets.env'");
+      const setupIndex = out.indexOf("setup_status=$?");
+      const unsetIndex = out.indexOf("unset NPM_TOKEN BUF_TOKEN");
+      const preLaunchIndex = out.indexOf("export FOO=bar");
+      const execIndex = out.indexOf(`exec claude "$_p"`);
+      // Unwrapped host path: source → setup → unset → preLaunch → exec.
+      // Same "preLaunch sees a clean env" contract as the safehouse path,
+      // just enforced via an explicit `unset` instead of source-after-mint.
+      expect(sourceIndex).toBeGreaterThan(-1);
+      expect(setupIndex).toBeGreaterThan(sourceIndex);
+      expect(unsetIndex).toBeGreaterThan(setupIndex);
+      expect(preLaunchIndex).toBeGreaterThan(unsetIndex);
+      expect(execIndex).toBeGreaterThan(preLaunchIndex);
+    });
+
+    it("substitutes {{worktree}} inside preLaunch", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          worktreeDir: "/work/repo-a-team-1",
+          definition: {
+            cmd: "claude",
+            color: "#fff",
+            preLaunch: "cd {{worktree}} && echo ok",
+          },
+        }),
+      );
+
+      expect(out).toContain("cd '/work/repo-a-team-1' && echo ok");
+      expect(out).not.toContain("{{worktree}}");
+    });
+
+    it("throws when preLaunch is set with runner='sdx'", () => {
+      expect(() =>
+        buildLaunchCommand(
+          arguments_({
+            runner: "sdx",
+            sandboxName: "groundcrew-repo-a-claude",
+            definition: {
+              cmd: "claude",
+              color: "#fff",
+              sandbox: { agent: "claude" },
+              preLaunch: "export FOO=bar",
+            },
+          }),
+        ),
+      ).toThrow(/preLaunch is not yet supported for runner='sdx'/);
+    });
+  });
+
+  describe("preLaunchEnv", () => {
+    it("splits --env-pass per wrap: build secrets to setup, preLaunchEnv to agent (PR #128 isolation)", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          secretsFile: "/tmp/prompt-team-1/secrets.env",
+          definition: {
+            cmd: "claude",
+            color: "#fff",
+            preLaunchEnv: ["SESSION_TOKEN", "TEAM_ID"],
+          },
+        }),
+      );
+
+      const setupWrapRe = /safehouse-clearance' (--env-pass=[^ ]+ )?sh -c '[^']*'/;
+      const agentWrapRe = /safehouse-clearance' (--env-pass=[^ ]+ )?"\$_safehouse_shim"/;
+      const setupWrapMatch = setupWrapRe.exec(out);
+      const agentWrapMatch = agentWrapRe.exec(out);
+      // Setup wrap: build secrets only — preLaunch credentials must never reach
+      // the profile-neutral setup phase that #128 deliberately walled off.
+      expect(setupWrapMatch?.[1]).toBe(`--env-pass=${BUILD_SECRET_NAMES.join(",")} `);
+      // Agent wrap: preLaunchEnv only — build secrets are `unset` on the host
+      // between the two wraps, so forwarding them here would silently no-op.
+      expect(agentWrapMatch?.[1]).toBe("--env-pass=SESSION_TOKEN,TEAM_ID ");
+      // The old single-wrap composition must NOT reappear anywhere.
+      expect(out).not.toContain(`--env-pass=${BUILD_SECRET_NAMES.join(",")},SESSION_TOKEN`);
+    });
+
+    it("emits an agent-wrap --env-pass when no secretsFile is staged (setup wrap unflagged)", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          definition: {
+            cmd: "claude",
+            color: "#fff",
+            preLaunchEnv: ["SESSION_TOKEN"],
+          },
+        }),
+      );
+
+      const setupWrapRe = /safehouse-clearance' (--env-pass=[^ ]+ )?sh -c '[^']*'/;
+      const agentWrapRe = /safehouse-clearance' (--env-pass=[^ ]+ )?"\$_safehouse_shim"/;
+      const setupWrapMatch = setupWrapRe.exec(out);
+      const agentWrapMatch = agentWrapRe.exec(out);
+      expect(setupWrapMatch?.[1]).toBeUndefined();
+      expect(agentWrapMatch?.[1]).toBe("--env-pass=SESSION_TOKEN ");
+      // No build-secret names should sneak in (no secretsFile staged).
+      for (const name of BUILD_SECRET_NAMES) {
+        expect(out).not.toContain(name);
+      }
+    });
+
+    it("omits --env-pass on both wraps when preLaunchEnv is an empty array and there is no secretsFile", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          definition: { cmd: "claude", color: "#fff", preLaunchEnv: [] },
+        }),
+      );
+
+      expect(out).not.toContain("--env-pass");
+    });
+
+    it("throws when preLaunchEnv is set with runner='sdx'", () => {
+      expect(() =>
+        buildLaunchCommand(
+          arguments_({
+            runner: "sdx",
+            sandboxName: "groundcrew-repo-a-claude",
+            definition: {
+              cmd: "claude",
+              color: "#fff",
+              sandbox: { agent: "claude" },
+              preLaunchEnv: ["SESSION_TOKEN"],
+            },
+          }),
+        ),
+      ).toThrow(/preLaunchEnv is not yet supported for runner='sdx'/);
+    });
+
+    it("treats preLaunchEnv: [] as a no-op under sdx (no throw, no --env-pass)", () => {
+      // Empty list forwards zero names → unsupported-runner guard must not
+      // fire. Locks the "empty is a uniform no-op in every runner" contract
+      // at the launch-command boundary as well as the prepare boundary.
+      const out = buildLaunchCommand(
+        arguments_({
+          runner: "sdx",
+          sandboxName: "groundcrew-repo-a-claude",
+          definition: {
+            cmd: "claude",
+            color: "#fff",
+            sandbox: { agent: "claude" },
+            preLaunchEnv: [],
+          },
+        }),
+      );
+
+      expect(out).toContain("exec sbx exec -it");
+      expect(out).not.toContain("--env-pass");
+    });
+
+    it("throws when preLaunchEnv is set with a cmd that already starts with safehouse", () => {
+      expect(() =>
+        buildLaunchCommand(
+          arguments_({
+            definition: {
+              cmd: "safehouse --env-pass=OTHER my-agent",
+              color: "#fff",
+              preLaunchEnv: ["SESSION_TOKEN"],
+            },
+          }),
+        ),
+      ).toThrow(/preLaunchEnv cannot be injected when `cmd` starts with `safehouse`/);
+    });
+
+    it("treats preLaunchEnv: [] as a no-op when cmd already starts with safehouse", () => {
+      // Same contract on the safehouse-prefixed-cmd path: an empty list has
+      // nothing to inject, so the user-owns-the-wrap guard must not fire,
+      // and groundcrew must not splice a second --env-pass onto a wrap it
+      // does not own.
+      const out = buildLaunchCommand(
+        arguments_({
+          definition: {
+            cmd: "safehouse my-agent",
+            color: "#fff",
+            preLaunchEnv: [],
+          },
+        }),
+      );
+
+      expect(out).toMatch(/exec safehouse my-agent "\$_p"$/);
+      expect(out).not.toContain("--env-pass");
+    });
+
+    it("does not throw on runner='none' with preLaunchEnv (exports already inherit)", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          runner: "none",
+          definition: {
+            cmd: "claude",
+            color: "#fff",
+            preLaunchEnv: ["SESSION_TOKEN"],
+          },
+        }),
+      );
+
+      // runner='none' goes through the unwrapped host path — no wrap, no flag.
       expect(out).not.toContain("--env-pass");
     });
   });

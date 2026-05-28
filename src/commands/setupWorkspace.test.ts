@@ -913,6 +913,137 @@ describe(setupWorkspace, () => {
     expect(ensureClearanceMock).not.toHaveBeenCalled();
   });
 
+  it("fails before creating a worktree when sdx is selected and the model has preLaunch", async () => {
+    detectHostMock.mockResolvedValue(
+      host({
+        hasSafehouse: false,
+        hasSbx: true,
+        hasCmux: false,
+        hasTmux: true,
+        isMacOS: false,
+        isLinux: true,
+        isSafehouseSupported: false,
+      }),
+    );
+    const config = makeConfig({
+      definitions: {
+        claude: {
+          cmd: "claude --auto",
+          color: "#fff",
+          sandbox: { agent: "claude" },
+          preLaunch: "export FOO=bar",
+        },
+        codex: { cmd: "codex", color: "#000" },
+      },
+    });
+
+    await expect(
+      setupWorkspace(config, {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        details: { title: "Test Title", description: "Body" },
+      }),
+    ).rejects.toThrow(/sdx runner do not support preLaunch on model 'claude'/);
+
+    expect(createMock).not.toHaveBeenCalled();
+    expect(ensureClearanceMock).not.toHaveBeenCalled();
+  });
+
+  it("fails before creating a worktree when sdx is selected and the model has preLaunchEnv", async () => {
+    detectHostMock.mockResolvedValue(
+      host({
+        hasSafehouse: false,
+        hasSbx: true,
+        hasCmux: false,
+        hasTmux: true,
+        isMacOS: false,
+        isLinux: true,
+        isSafehouseSupported: false,
+      }),
+    );
+    const config = makeConfig({
+      definitions: {
+        claude: {
+          cmd: "claude --auto",
+          color: "#fff",
+          sandbox: { agent: "claude" },
+          preLaunchEnv: ["SESSION_TOKEN"],
+        },
+        codex: { cmd: "codex", color: "#000" },
+      },
+    });
+
+    await expect(
+      setupWorkspace(config, {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        details: { title: "Test Title", description: "Body" },
+      }),
+    ).rejects.toThrow(/sdx runner do not support preLaunchEnv on model 'claude'/);
+
+    expect(createMock).not.toHaveBeenCalled();
+    expect(ensureClearanceMock).not.toHaveBeenCalled();
+  });
+
+  it("treats preLaunchEnv: [] as a no-op under sdx and proceeds with the normal launch", async () => {
+    // An empty list forwards zero names, so the unsupported-runner guard
+    // should not fire — locks the "empty is a uniform no-op in every runner"
+    // contract so it can't regress per-site.
+    detectHostMock.mockResolvedValue(sdxHost());
+    const config = makeConfig({
+      definitions: {
+        claude: {
+          cmd: "claude --auto",
+          color: "#fff",
+          sandbox: { agent: "claude" },
+          preLaunchEnv: [],
+        },
+        codex: { cmd: "codex", color: "#000" },
+      },
+    });
+
+    await setupWorkspace(config, {
+      ticket: "team-1",
+      repository: "repo-a",
+      model: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
+
+    expect(ensureClearanceMock).not.toHaveBeenCalled();
+    expect(writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh")).toContain("exec sbx exec -it");
+  });
+
+  it("fails before creating a worktree when safehouse cmd uses preLaunchEnv with a safehouse-prefixed cmd", async () => {
+    // safehouse-prefixed cmd owns its own --env-pass flag, so groundcrew can't
+    // splice preLaunchEnv into a wrap it does not control. Fail at prepare-
+    // launch time so the operator sees it before the workspace is created
+    // (mirror of the duplicate defense in buildLaunchCommand).
+    detectHostMock.mockResolvedValue(host({ hasSafehouse: true, isMacOS: true }));
+    const config = makeConfig({
+      definitions: {
+        claude: {
+          cmd: "safehouse --env-pass=OTHER claude --auto",
+          color: "#fff",
+          preLaunchEnv: ["SESSION_TOKEN"],
+        },
+        codex: { cmd: "codex", color: "#000" },
+      },
+    });
+
+    await expect(
+      setupWorkspace(config, {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        details: { title: "Test Title", description: "Body" },
+      }),
+    ).rejects.toThrow(/cannot inject preLaunchEnv when 'cmd' already starts with 'safehouse'/);
+
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
   it("fails before creating a worktree when safehouse is missing on macOS", async () => {
     detectHostMock.mockResolvedValue(host({ hasSafehouse: false }));
     const config = makeConfig();
