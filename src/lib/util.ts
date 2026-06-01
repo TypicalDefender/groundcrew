@@ -1,5 +1,5 @@
 import { appendFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import path from "node:path";
 import { styleText } from "node:util";
 
 export async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -80,8 +80,8 @@ export function styleDim(text: string): string {
 let logFilePath: string | undefined;
 let suppressedLogDepth = 0;
 
-export function setLogFile(path: string | undefined): void {
-  logFilePath = path;
+export function setLogFile(filePath: string | undefined): void {
+  logFilePath = filePath;
 }
 
 export async function withLogOutputSuppressed<T>(operation: () => Promise<T>): Promise<T> {
@@ -98,7 +98,7 @@ function appendLogLine(line: string): void {
     return;
   }
   try {
-    mkdirSync(dirname(logFilePath), { recursive: true });
+    mkdirSync(path.dirname(logFilePath), { recursive: true });
     appendFileSync(logFilePath, `${line}\n`);
   } catch {
     // A broken log destination must not crash the CLI. Stdout still has

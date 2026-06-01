@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { cosmiconfig, type CosmiconfigResult, type Loader } from "cosmiconfig";
@@ -341,7 +341,7 @@ function expandHome(p: string): string {
     return homedir();
   }
   if (p.startsWith("~/")) {
-    return resolve(homedir(), p.slice(2));
+    return path.resolve(homedir(), p.slice(2));
   }
   return p;
 }
@@ -354,26 +354,26 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
-function requireString(value: unknown, path: string): asserts value is string {
+function requireString(value: unknown, configKey: string): asserts value is string {
   if (!isNonEmptyString(value)) {
-    fail(`${path} must be a non-empty string (got ${JSON.stringify(value)})`);
+    fail(`${configKey} must be a non-empty string (got ${JSON.stringify(value)})`);
   }
 }
 
-function requirePositiveInt(value: unknown, path: string, min = 1): asserts value is number {
+function requirePositiveInt(value: unknown, configKey: string, min = 1): asserts value is number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < min) {
-    fail(`${path} must be an integer ≥ ${min} (got ${JSON.stringify(value)})`);
+    fail(`${configKey} must be an integer ≥ ${min} (got ${JSON.stringify(value)})`);
   }
 }
 
-function requirePercent(value: unknown, path: string): asserts value is number {
+function requirePercent(value: unknown, configKey: string): asserts value is number {
   if (
     typeof value !== "number" ||
     !Number.isFinite(value) ||
     value <= PERCENT_MIN_EXCLUSIVE ||
     value > PERCENT_MAX
   ) {
-    fail(`${path} must be a finite number in (0, 100] (got ${JSON.stringify(value)})`);
+    fail(`${configKey} must be a finite number in (0, 100] (got ${JSON.stringify(value)})`);
   }
 }
 
@@ -381,12 +381,12 @@ function cloneModelDefinition(definition: ModelDefinition): ModelDefinition {
   return structuredClone(definition);
 }
 
-function normalizeOptionalString(value: unknown, path: string): string | undefined {
+function normalizeOptionalString(value: unknown, configKey: string): string | undefined {
   if (value === undefined) {
     return undefined;
   }
   if (typeof value !== "string" || value.trim().length === 0) {
-    fail(`${path} must be a non-empty string`);
+    fail(`${configKey} must be a non-empty string`);
   }
   return value.trim();
 }
@@ -394,14 +394,14 @@ function normalizeOptionalString(value: unknown, path: string): string | undefin
 const ENV_VAR_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 function validatePreLaunchEnv(modelName: string, value: unknown): asserts value is string[] {
-  const path = `models.definitions.${modelName}.preLaunchEnv`;
+  const configPath = `models.definitions.${modelName}.preLaunchEnv`;
   if (!Array.isArray(value)) {
-    fail(`${path} must be an array of env var names (got ${JSON.stringify(value)})`);
+    fail(`${configPath} must be an array of env var names (got ${JSON.stringify(value)})`);
   }
   for (const [index, entry] of value.entries()) {
     if (typeof entry !== "string" || !ENV_VAR_NAME_PATTERN.test(entry)) {
       fail(
-        `${path}[${index}] must be a POSIX env var name matching ${ENV_VAR_NAME_PATTERN.source} (got ${JSON.stringify(entry)})`,
+        `${configPath}[${index}] must be a POSIX env var name matching ${ENV_VAR_NAME_PATTERN.source} (got ${JSON.stringify(entry)})`,
       );
     }
     // Build secrets are sourced into the host launch shell, forwarded only to
@@ -411,7 +411,7 @@ function validatePreLaunchEnv(modelName: string, value: unknown): asserts value 
     // entry) instead of debugging a missing env var at runtime.
     if ((BUILD_SECRET_NAMES as readonly string[]).includes(entry)) {
       fail(
-        `${path}[${index}] cannot be a BUILD_SECRET_NAMES entry (${BUILD_SECRET_NAMES.join(", ")}); ` +
+        `${configPath}[${index}] cannot be a BUILD_SECRET_NAMES entry (${BUILD_SECRET_NAMES.join(", ")}); ` +
           "those are unset on the host before the agent wrap is exec'd, so forwarding them via --env-pass would be a no-op.",
       );
     }
@@ -438,13 +438,16 @@ function isWorkspaceKindSetting(value: unknown): value is WorkspaceKindSetting {
   );
 }
 
-function normalizeWorkspaceKind(value: unknown, path: string): WorkspaceKindSetting | undefined {
+function normalizeWorkspaceKind(
+  value: unknown,
+  configKey: string,
+): WorkspaceKindSetting | undefined {
   if (value === undefined) {
     return undefined;
   }
   if (!isWorkspaceKindSetting(value)) {
     fail(
-      `${path} must be one of ${WORKSPACE_KIND_SETTINGS.join(", ")} (got ${JSON.stringify(value)})`,
+      `${configKey} must be one of ${WORKSPACE_KIND_SETTINGS.join(", ")} (got ${JSON.stringify(value)})`,
     );
   }
   return value;
@@ -454,51 +457,51 @@ function isLocalRunnerSetting(value: unknown): value is LocalRunnerSetting {
   return typeof value === "string" && (LOCAL_RUNNER_SETTINGS as readonly string[]).includes(value);
 }
 
-function normalizeLocalRunner(value: unknown, path: string): LocalRunnerSetting | undefined {
+function normalizeLocalRunner(value: unknown, configKey: string): LocalRunnerSetting | undefined {
   if (value === undefined) {
     return undefined;
   }
   if (!isLocalRunnerSetting(value)) {
     fail(
-      `${path} must be one of ${LOCAL_RUNNER_SETTINGS.join(", ")} (got ${JSON.stringify(value)})`,
+      `${configKey} must be one of ${LOCAL_RUNNER_SETTINGS.join(", ")} (got ${JSON.stringify(value)})`,
     );
   }
   return value;
 }
 
-function normalizeSandbox(value: unknown, path: string): SandboxDefinition {
+function normalizeSandbox(value: unknown, configKey: string): SandboxDefinition {
   if (!isPlainObject(value)) {
-    fail(`${path} must be an object`);
+    fail(`${configKey} must be an object`);
   }
   if (Object.hasOwn(value, "template")) {
     failRemovedConfigKey(
-      `${path}.template`,
+      `${configKey}.template`,
       "Groundcrew no longer creates or re-templates sdx sandboxes.",
     );
   }
   if (Object.hasOwn(value, "kits")) {
     failRemovedConfigKey(
-      `${path}.kits`,
+      `${configKey}.kits`,
       "Groundcrew no longer creates sdx sandboxes or applies sandbox kits.",
     );
   }
   const { agent, setupCommand } = value;
-  requireString(agent, `${path}.agent`);
+  requireString(agent, `${configKey}.agent`);
   const trimmedAgent = agent.trim();
   if (trimmedAgent.length === 0) {
-    fail(`${path}.agent must be a non-empty string (got ${JSON.stringify(agent)})`);
+    fail(`${configKey}.agent must be a non-empty string (got ${JSON.stringify(agent)})`);
   }
   const sandbox: SandboxDefinition = { agent: trimmedAgent };
-  const normalizedSetup = normalizeOptionalString(setupCommand, `${path}.setupCommand`);
+  const normalizedSetup = normalizeOptionalString(setupCommand, `${configKey}.setupCommand`);
   if (normalizedSetup !== undefined) {
     sandbox.setupCommand = normalizedSetup;
   }
   return sandbox;
 }
 
-function failRemovedConfigKey(path: string, reason: string): never {
+function failRemovedConfigKey(configKey: string, reason: string): never {
   fail(
-    `${path} is no longer supported: ${reason} ` +
+    `${configKey} is no longer supported: ${reason} ` +
       "Provision and manage the sandbox yourself with `sbx` (for example `sbx create --name groundcrew-<agent> <agent> <projectDir>`), then keep only `models.definitions.<model>.sandbox.agent` plus optional `setupCommand` in crew.config.ts.",
   );
 }
@@ -646,9 +649,9 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function requireObject(value: unknown, path: string): void {
+function requireObject(value: unknown, configKey: string): void {
   if (!isPlainObject(value)) {
-    fail(`${path} must be an object (got ${JSON.stringify(value)})`);
+    fail(`${configKey} must be an object (got ${JSON.stringify(value)})`);
   }
 }
 
@@ -697,12 +700,12 @@ function normalizeSources(raw: unknown): SourceConfig[] {
   }
   const names = new Map<string, number>();
   for (const [index, entry] of raw.entries()) {
-    const path = `sources[${index}]`;
+    const configPath = `sources[${index}]`;
     if (!isPlainObject(entry)) {
-      fail(`${path} must be an object`);
+      fail(`${configPath} must be an object`);
     }
     const { kind, name } = entry;
-    requireString(kind, `${path}.kind`);
+    requireString(kind, `${configPath}.kind`);
     // Per-adapter Zod validation runs in `buildSources`. Here we check name
     // uniqueness — the Board composer relies on it for writeback routing.
     // When `name` is omitted, the adapter's runtime default is `kind` (the
@@ -710,7 +713,7 @@ function normalizeSources(raw: unknown): SourceConfig[] {
     // dedup on the effective runtime name to catch e.g. two `{kind: "linear"}`
     // entries that would both produce a source named `"linear"`.
     if (name !== undefined) {
-      requireString(name, `${path}.name`);
+      requireString(name, `${configPath}.name`);
     }
     /* v8 ignore next @preserve -- both `name`-set and `name`-unset paths are covered by separate dedup tests; coverage for the fallback's `kind` arm only fires when both entries in the dedup set come from `name`, which the second test already covers */
     const effectiveName = name ?? kind;
@@ -718,7 +721,7 @@ function normalizeSources(raw: unknown): SourceConfig[] {
     if (previous !== undefined) {
       /* v8 ignore next 3 @preserve -- the `name === undefined` ternary arm requires two unnamed entries colliding; we keep the conditional for the better error message but only one path is exercised in tests */
       fail(
-        `${path} would produce a source named "${effectiveName}" (from ${name === undefined ? "default `kind` since `name` is omitted" : "`name`"}), duplicating sources[${previous}]. Configure distinct \`name\` fields.`,
+        `${configPath} would produce a source named "${effectiveName}" (from ${name === undefined ? "default `kind` since `name` is omitted" : "`name`"}), duplicating sources[${previous}]. Configure distinct \`name\` fields.`,
       );
     }
     names.set(effectiveName, index);
@@ -954,15 +957,15 @@ async function loadAt(filepath: string): Promise<DiscoveredConfig> {
 }
 
 function findXdgConfigFile(): string | undefined {
-  return XDG_FALLBACK_NAMES.map((name) => xdgConfigPath("groundcrew", name)).find((path) =>
-    existsSync(path),
+  return XDG_FALLBACK_NAMES.map((name) => xdgConfigPath("groundcrew", name)).find((p) =>
+    existsSync(p),
   );
 }
 
 async function discoverUserConfig(): Promise<DiscoveredConfig> {
   const override = readEnvironmentVariable("GROUNDCREW_CONFIG");
   if (override !== undefined && override.length > 0) {
-    const overridePath = resolve(override);
+    const overridePath = path.resolve(override);
     if (!existsSync(overridePath)) {
       fail(`GROUNDCREW_CONFIG=${overridePath} not found`);
     }
