@@ -1,5 +1,6 @@
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
+import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { ensureClearance } from "@clipboard-health/clearance";
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
@@ -152,9 +153,13 @@ function host(overrides: Partial<HostCapabilities> = {}): HostCapabilities {
     hasSbx: false,
     hasCmux: true,
     hasTmux: false,
+    hasBubblewrap: false,
+    hasSocat: false,
+    hasRipgrep: false,
     isMacOS: true,
     isLinux: false,
     isSafehouseSupported: true,
+    isSrtSupported: true,
     isSdxSupported: true,
     ...overrides,
   };
@@ -447,6 +452,41 @@ describe(setupWorkspace, () => {
     expect(command).not.toContain("prompt.txt");
     expect(launchScript).toContain("safehouse-clearance");
     expect(launchScript).toContain("_p=$(cat '/tmp/groundcrew-team-1-x/prompt.txt')");
+  });
+
+  it("stages neutral prepare + full agent srt settings and wraps the agent under the agent policy when runner=srt", async () => {
+    const config = makeConfig();
+    config.local = { runner: "srt" };
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(config, {
+      ticket: "team-1",
+      repository: "repo-a",
+      model: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
+
+    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- staged settings are SandboxRuntimeConfig JSON
+    const agent = JSON.parse(
+      writtenFileContent("/tmp/groundcrew-team-1-x/agent-settings.json"),
+    ) as SandboxRuntimeConfig;
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- staged settings are SandboxRuntimeConfig JSON
+    const prepare = JSON.parse(
+      writtenFileContent("/tmp/groundcrew-team-1-x/prepare-settings.json"),
+    ) as SandboxRuntimeConfig;
+
+    expect(launchScript).toContain("--settings '/tmp/groundcrew-team-1-x/agent-settings.json'");
+    expect(launchScript).toMatch(/sandbox-runtime\/dist\/cli\.js/);
+    expect(launchScript).toContain(`exec claude --auto "$@"`);
+    expect(launchScript).not.toContain("safehouse-clearance");
+    // The agent policy grants the claude credential dir writable; the
+    // profile-neutral prepare policy does not — so a repo-controlled
+    // prepareWorktree hook can't read or mutate agent credentials.
+    expect(agent.filesystem.allowWrite.some((p) => p.endsWith("/.claude"))).toBe(true);
+    expect(agent.allowPty).toBe(true);
+    expect(prepare.filesystem.allowWrite.some((p) => p.endsWith("/.claude"))).toBe(false);
+    expect(prepare.filesystem.allowRead?.some((p) => p.endsWith("/.claude"))).toBe(false);
   });
 
   it("passes an AbortSignal into worktree creation and workspace launch", async () => {
