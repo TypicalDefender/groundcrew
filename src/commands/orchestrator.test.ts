@@ -6,6 +6,7 @@ import type { LinearClient } from "@linear/sdk";
 
 import type * as configModule from "../lib/config.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { findPullRequestsForBranch } from "../lib/pullRequests.ts";
 import { getUsageByModel } from "../lib/usage.ts";
 import type * as utilModule from "../lib/util.ts";
 import { setVerbose, sleep } from "../lib/util.ts";
@@ -65,6 +66,10 @@ vi.mock(import("../lib/usage.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, getUsageByModel: vi.fn<typeof getUsageByModel>() };
 });
+vi.mock(import("../lib/pullRequests.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, findPullRequestsForBranch: vi.fn<typeof findPullRequestsForBranch>() };
+});
 vi.mock(import("./setupWorkspace.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, setupWorkspace: vi.fn<typeof setupWorkspace>() };
@@ -83,6 +88,7 @@ const teardownMock = vi.mocked(worktrees.teardown);
 const usageMock = vi.mocked(getUsageByModel);
 const setupMock = vi.mocked(setupWorkspace);
 const workspacesProbeMock = vi.mocked(workspaces.probe);
+const findPullRequestsMock = vi.mocked(findPullRequestsForBranch);
 
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
@@ -333,6 +339,7 @@ describe(orchestrate, () => {
     usageMock.mockResolvedValue({});
     setupMock.mockResolvedValue();
     workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
+    findPullRequestsMock.mockResolvedValue([]);
     // Telemetry (event= lines) and teardown sub-steps are diagnostic, surfacing
     // on the console only under verbose — several cases assert that wording.
     setVerbose(true);
@@ -1233,6 +1240,68 @@ describe(orchestrate, () => {
     await orchestrate({ watch: false, dryRun: false });
 
     expect(client.team).toHaveBeenCalledTimes(1);
+  });
+
+  it("advances an in-progress shell ticket to in-review when its worktree has an open PR", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "orchestrate-shell-review-"));
+    try {
+      const reviewMarker = path.join(dir, "review-ran");
+      const fetchScript = path.join(dir, "fetch.sh");
+      const reviewScript = path.join(dir, "review.sh");
+      writeFileSync(
+        fetchScript,
+        `#!/usr/bin/env bash
+cat <<'JSON'
+[
+  {
+    "id": "X-1",
+    "title": "Reviewable shell ticket",
+    "description": "Touches repo-a.",
+    "status": "in-progress",
+    "repository": "repo-a",
+    "model": "claude",
+    "assignee": "Alice",
+    "updatedAt": "2026-01-01T00:00:00Z",
+    "blockers": [],
+    "sourceRef": { "nativeId": "x-1" }
+  }
+]
+JSON
+`,
+      );
+      writeFileSync(reviewScript, `#!/usr/bin/env bash\ncat > "${reviewMarker}"\n`);
+      chmodSync(fetchScript, 0o755);
+      chmodSync(reviewScript, 0o755);
+      loadConfigMock.mockResolvedValue(
+        makeConfig({
+          sources: [
+            {
+              kind: "shell",
+              name: "test-source",
+              commands: { fetch: fetchScript, markInReview: reviewScript },
+            },
+          ],
+        }),
+      );
+      listMock.mockReturnValue([hostEntryFor("repo-a", "x-1")]);
+      workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["x-1"]) });
+      findPullRequestsMock.mockResolvedValue([
+        { url: "https://github.com/x/y/pull/3", number: 3, state: "open", title: "PR" },
+      ]);
+      const client = makeClient({ pages: [[]] });
+      mockLinearClient(client);
+
+      await orchestrate({ watch: false, dryRun: false });
+
+      expect(findPullRequestsMock).toHaveBeenCalledWith({
+        cwd: "/work/repo-a-x-1",
+        branchName: "dev-x-1",
+      });
+      expect(existsSync(reviewMarker)).toBe(true);
+      expect(consoleLog.output()).toContain("Advanced x-1 to in-review");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("hands a Done worktree to teardown", async () => {

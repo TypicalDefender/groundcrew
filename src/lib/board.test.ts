@@ -1,5 +1,5 @@
 import { createBoard } from "./board.ts";
-import type { Issue, ParentSkip, TicketSource } from "./ticketSource.ts";
+import type { Issue, MarkInReviewResult, ParentSkip, TicketSource } from "./ticketSource.ts";
 
 function fakeSource(name: string, overrides: Partial<TicketSource> = {}): TicketSource {
   return {
@@ -9,6 +9,9 @@ function fakeSource(name: string, overrides: Partial<TicketSource> = {}): Ticket
     // eslint-disable-next-line unicorn/no-useless-undefined -- mockResolvedValue requires a value for non-void return type
     resolveOne: vi.fn<(id: string) => Promise<Issue | undefined>>().mockResolvedValue(undefined),
     markInProgress: vi.fn<(issue: Issue) => Promise<void>>().mockResolvedValue(),
+    markInReview: vi
+      .fn<(issue: Issue) => Promise<MarkInReviewResult>>()
+      .mockResolvedValue({ outcome: "applied" }),
     ...overrides,
   };
 }
@@ -225,6 +228,33 @@ describe("Board.markInProgress", () => {
   it("throws when issue.source names an unknown source", async () => {
     const board = createBoard([fakeSource("a")]);
     await expect(board.markInProgress(fakeIssue("nope:1", "nope"))).rejects.toThrow(
+      /unknown source.*nope/,
+    );
+  });
+});
+
+describe("Board.markInReview", () => {
+  it("routes to the adapter named by issue.source", async () => {
+    const aMark = vi
+      .fn<(issue: Issue) => Promise<MarkInReviewResult>>()
+      .mockResolvedValue({ outcome: "applied" });
+    const bMark = vi
+      .fn<(issue: Issue) => Promise<MarkInReviewResult>>()
+      .mockRejectedValue(new Error("wrong source"));
+    const board = createBoard([
+      fakeSource("a", { markInReview: aMark }),
+      fakeSource("b", { markInReview: bMark }),
+    ]);
+    await expect(board.markInReview(fakeIssue("a:1", "a"))).resolves.toStrictEqual({
+      outcome: "applied",
+    });
+    expect(aMark).toHaveBeenCalledTimes(1);
+    expect(bMark).not.toHaveBeenCalled();
+  });
+
+  it("throws when issue.source names an unknown source", async () => {
+    const board = createBoard([fakeSource("a")]);
+    await expect(board.markInReview(fakeIssue("nope:1", "nope"))).rejects.toThrow(
       /unknown source.*nope/,
     );
   });

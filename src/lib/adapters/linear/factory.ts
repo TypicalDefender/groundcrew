@@ -18,6 +18,7 @@ import {
   type Blocker as CanonicalBlocker,
   type CanonicalStatus,
   type Issue as CanonicalIssue,
+  type MarkInReviewResult,
   type ParentSkip as CanonicalParentSkip,
   type TicketSource,
 } from "../../ticketSource.ts";
@@ -229,6 +230,15 @@ export function createLinearTicketSource(
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- by the Linear adapter's contract, every Issue it produces carries a LinearSourceRef in sourceRef
       const ref = issue.sourceRef as LinearSourceRef;
       await getIssueStatusUpdater().markInProgress({
+        id: issue.id,
+        uuid: ref.uuid,
+        teamId: ref.teamId,
+      });
+    },
+    async markInReview(issue: CanonicalIssue): Promise<MarkInReviewResult> {
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- by the Linear adapter's contract, every Issue it produces carries a LinearSourceRef in sourceRef
+      const ref = issue.sourceRef as LinearSourceRef;
+      return await getIssueStatusUpdater().markInReview({
         id: issue.id,
         uuid: ref.uuid,
         teamId: ref.teamId,

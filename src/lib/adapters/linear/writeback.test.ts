@@ -53,6 +53,21 @@ describe(createLinearIssueStatusUpdater, () => {
     vi.clearAllMocks();
   });
 
+  it("markInReview reports unsupported without calling Linear", async () => {
+    const client = makeClient();
+    const updater = createLinearIssueStatusUpdater({ client: asLinearClient(client) });
+
+    await expect(
+      updater.markInReview({ id: "team-1", uuid: "uuid-1", teamId: "shared" }),
+    ).resolves.toStrictEqual({
+      outcome: "unsupported",
+      reason: "Linear in-review writeback is not implemented",
+    });
+
+    expect(client.team).not.toHaveBeenCalled();
+    expect(client.updateIssue).not.toHaveBeenCalled();
+  });
+
   it("fetches the started-type state once across multiple tickets in the same team", async () => {
     const client = makeClient();
     const updater = createLinearIssueStatusUpdater({

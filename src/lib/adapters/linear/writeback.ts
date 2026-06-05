@@ -1,5 +1,6 @@
 import type { LinearClient } from "@linear/sdk";
 
+import type { MarkInReviewResult } from "../../ticketSource.ts";
 import { debug } from "../../util.ts";
 
 interface LinearIssueReference {
@@ -10,6 +11,18 @@ interface LinearIssueReference {
 
 interface LinearIssueStatusUpdater {
   markInProgress(issue: LinearIssueReference): Promise<void>;
+  markInReview(issue: LinearIssueReference): Promise<MarkInReviewResult>;
+}
+
+// Linear maps every `started` workflow state to canonical in-progress today,
+// so it cannot prove a successful in-review transition. Report unsupported
+// until read/write sides can distinguish "In Review" from generic started.
+async function markInReviewUnsupported(issue: LinearIssueReference): Promise<MarkInReviewResult> {
+  debug(`markInReview is unsupported for ${issue.id} (Linear in-review not yet implemented)`);
+  return {
+    outcome: "unsupported",
+    reason: "Linear in-review writeback is not implemented",
+  };
 }
 
 export function createLinearIssueStatusUpdater(arguments_: {
@@ -68,5 +81,5 @@ export function createLinearIssueStatusUpdater(arguments_: {
     debug(`Marked ${issue.id} as in progress`);
   }
 
-  return { markInProgress };
+  return { markInProgress, markInReview: markInReviewUnsupported };
 }
