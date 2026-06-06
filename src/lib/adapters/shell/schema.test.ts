@@ -225,4 +225,24 @@ describe("shell adapter config schema", () => {
     };
     expect(() => shellAdapterConfigSchema.parse(config)).toThrow(/expected int|integer/i);
   });
+
+  it("accepts commands.markDone and timeouts.markDone", () => {
+    const config = {
+      kind: "shell",
+      name: "jira",
+      commands: { fetch: "./fetch.sh", markDone: "jira move ${id} 'Done'" },
+      timeouts: { markDone: 15_000 },
+    };
+    expect(() => shellAdapterConfigSchema.parse(config)).not.toThrow();
+  });
+
+  it("rejects a zero markDone timeout", () => {
+    const config = {
+      kind: "shell",
+      name: "jira",
+      commands: { fetch: "./fetch.sh" },
+      timeouts: { markDone: 0 },
+    };
+    expect(() => shellAdapterConfigSchema.parse(config)).toThrow(/too small|>0/i);
+  });
 });

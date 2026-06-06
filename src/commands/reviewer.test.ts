@@ -2,7 +2,7 @@ import { setVerbose } from "../lib/util.ts";
 import { canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
 import type { Board } from "../lib/board.ts";
 import type { PullRequestSummary } from "../lib/pullRequests.ts";
-import type { BoardState, Issue, MarkInReviewResult } from "../lib/ticketSource.ts";
+import type { BoardState, Issue, MarkDoneResult, MarkInReviewResult } from "../lib/ticketSource.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
 import { makeBoard } from "../testHelpers/boardFixtures.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
@@ -38,6 +38,7 @@ function pullRequest(overrides: Partial<PullRequestSummary> = {}): PullRequestSu
     number: overrides.number ?? 1,
     state: overrides.state ?? "open",
     title: overrides.title ?? "PR title",
+    headRefOid: overrides.headRefOid ?? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   };
 }
 
@@ -48,6 +49,7 @@ function findReturning(prs: readonly PullRequestSummary[]): FindPullRequests {
 describe(createReviewer, () => {
   let consoleLog: ConsoleCapture;
   let markInReviewMock: ReturnType<typeof vi.fn<(issue: Issue) => Promise<MarkInReviewResult>>>;
+  let markDoneMock: ReturnType<typeof vi.fn<(issue: Issue) => Promise<MarkDoneResult>>>;
   let board: Board;
 
   beforeEach(() => {
@@ -55,7 +57,10 @@ describe(createReviewer, () => {
     markInReviewMock = vi
       .fn<(issue: Issue) => Promise<MarkInReviewResult>>()
       .mockResolvedValue({ outcome: "applied" });
-    board = makeBoard({ markInReview: markInReviewMock });
+    markDoneMock = vi
+      .fn<(issue: Issue) => Promise<MarkDoneResult>>()
+      .mockResolvedValue({ outcome: "applied" });
+    board = makeBoard({ markInReview: markInReviewMock, markDone: markDoneMock });
     // review telemetry (event= lines) is diagnostic — verbose echoes it to the
     // console so these cases can assert the wording.
     setVerbose(true);
@@ -67,7 +72,7 @@ describe(createReviewer, () => {
     vi.clearAllMocks();
   });
 
-  it("does nothing when no issue is in-progress", async () => {
+  it("does nothing when there are no in-progress or in-review candidates", async () => {
     const findPullRequests = findReturning([pullRequest()]);
     const reviewer = createReviewer({ board, findPullRequests });
 
@@ -82,6 +87,7 @@ describe(createReviewer, () => {
 
     expect(findPullRequests).not.toHaveBeenCalled();
     expect(markInReviewMock).not.toHaveBeenCalled();
+    expect(markDoneMock).not.toHaveBeenCalled();
   });
 
   it("advances an in-progress ticket whose worktree has an open PR", async () => {
@@ -107,7 +113,64 @@ describe(createReviewer, () => {
     expect(out).toContain("event=review outcome=advanced ticket=team-1");
   });
 
-  it("advances when the PR has already merged between ticks", async () => {
+  it("advances a merged PR to done (not in-review)", async () => {
+    const reviewer = createReviewer({
+      board,
+      findPullRequests: findReturning([pullRequest({ state: "merged", url: "https://gh/pr/3" })]),
+    });
+
+    await reviewer.runOnce({
+      state: boardOf([inProgressIssue("team-1")]),
+      worktreeEntries: [hostEntryFor("team-1")],
+      dryRun: false,
+    });
+
+    expect(markDoneMock).toHaveBeenCalledTimes(1);
+    expect(markInReviewMock).not.toHaveBeenCalled();
+    const out = consoleLog.output();
+    expect(out).toContain("Advanced team-1 to done (PR https://gh/pr/3)");
+    expect(out).toContain("event=review outcome=advanced ticket=team-1");
+    expect(out).toContain("to=done");
+  });
+
+  it("advances an in-review ticket to done when its PR has merged", async () => {
+    const issue = inProgressIssue("team-1", { status: "in-review" });
+    const reviewer = createReviewer({
+      board,
+      findPullRequests: findReturning([pullRequest({ state: "merged" })]),
+    });
+
+    await reviewer.runOnce({
+      state: boardOf([issue]),
+      worktreeEntries: [hostEntryFor("team-1")],
+      dryRun: false,
+    });
+
+    expect(markDoneMock).toHaveBeenCalledWith(issue);
+    expect(markInReviewMock).not.toHaveBeenCalled();
+  });
+
+  it("leaves an in-review ticket alone when it only has an open PR", async () => {
+    const reviewer = createReviewer({
+      board,
+      findPullRequests: findReturning([pullRequest({ state: "open" })]),
+    });
+
+    await reviewer.runOnce({
+      state: boardOf([inProgressIssue("team-1", { status: "in-review" })]),
+      worktreeEntries: [hostEntryFor("team-1")],
+      dryRun: false,
+    });
+
+    expect(markDoneMock).not.toHaveBeenCalled();
+    expect(markInReviewMock).not.toHaveBeenCalled();
+  });
+
+  it("does not fall back to in-review when a merged PR's source cannot mark done", async () => {
+    markDoneMock.mockResolvedValueOnce({
+      outcome: "unsupported",
+      reason: "source has no done transition",
+    });
     const reviewer = createReviewer({
       board,
       findPullRequests: findReturning([pullRequest({ state: "merged" })]),
@@ -119,8 +182,30 @@ describe(createReviewer, () => {
       dryRun: false,
     });
 
-    expect(markInReviewMock).toHaveBeenCalledTimes(1);
-    expect(consoleLog.output()).toContain("event=review outcome=advanced ticket=team-1 pr");
+    expect(markDoneMock).toHaveBeenCalledTimes(1);
+    expect(markInReviewMock).not.toHaveBeenCalled();
+    const out = consoleLog.output();
+    expect(out).toContain("Skipped advancing team-1 to done: source has no done transition");
+    expect(out).not.toContain("Advanced team-1 to");
+  });
+
+  it("dry-run logs a would-advance to done for a merged PR and writes nothing", async () => {
+    const reviewer = createReviewer({
+      board,
+      findPullRequests: findReturning([pullRequest({ state: "merged", url: "https://gh/pr/5" })]),
+    });
+
+    await reviewer.runOnce({
+      state: boardOf([inProgressIssue("team-1")]),
+      worktreeEntries: [hostEntryFor("team-1")],
+      dryRun: true,
+    });
+
+    expect(markDoneMock).not.toHaveBeenCalled();
+    expect(markInReviewMock).not.toHaveBeenCalled();
+    const out = consoleLog.output();
+    expect(out).toContain("[dry-run] Would advance team-1 to done (PR https://gh/pr/5)");
+    expect(out).toContain("event=review outcome=skipped reason=dry_run ticket=team-1");
   });
 
   it("skips when the worktree has no PR (or the lookup failed)", async () => {
@@ -190,7 +275,31 @@ describe(createReviewer, () => {
     expect(out).toContain("Advanced team-2 to in-review");
   });
 
-  it("never looks up PRs for a non-in-progress ticket even if it has a worktree", async () => {
+  it("keeps advancing other merged tickets when one issue's markDone fails", async () => {
+    // Error isolation on the done path: a markDone failure on the first merged
+    // ticket must not prevent the second merged ticket from advancing this tick.
+    markDoneMock
+      .mockRejectedValueOnce(new Error("team-1 shell error"))
+      .mockResolvedValueOnce({ outcome: "applied" });
+    const reviewer = createReviewer({
+      board,
+      findPullRequests: findReturning([pullRequest({ state: "merged" })]),
+    });
+
+    await reviewer.runOnce({
+      state: boardOf([inProgressIssue("team-1"), inProgressIssue("team-2")]),
+      worktreeEntries: [hostEntryFor("team-1"), hostEntryFor("team-2")],
+      dryRun: false,
+    });
+
+    expect(markDoneMock).toHaveBeenCalledTimes(2);
+    expect(markInReviewMock).not.toHaveBeenCalled();
+    const out = consoleLog.output();
+    expect(out).toContain("Failed to advance team-1 to done");
+    expect(out).toContain("Advanced team-2 to done");
+  });
+
+  it("never looks up PRs for a todo ticket even if it has a worktree", async () => {
     const findPullRequests = findReturning([pullRequest({ state: "open" })]);
     const reviewer = createReviewer({ board, findPullRequests });
 

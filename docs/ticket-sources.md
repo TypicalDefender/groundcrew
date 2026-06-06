@@ -16,8 +16,9 @@ export default {
         resolveOne: "~/.config/groundcrew/jira-resolve.sh ${id}",
         markInProgress: "jira issue move ${id} 'In Progress'",
         markInReview: "jira issue move ${id} 'In Review'",
+        markDone: "jira issue move ${id} 'Done'",
       },
-      timeouts: { fetch: 60_000, markInReview: 15_000 },
+      timeouts: { fetch: 60_000, markInReview: 15_000, markDone: 15_000 },
     },
   ],
 };
@@ -26,12 +27,15 @@ export default {
 `commands.fetch` must print a JSON array of issues. `commands.resolveOne`, when
 set, must print one issue, print nothing for "not found", or exit `3` for "not
 found". `commands.markInProgress`, when set, receives the issue's `sourceRef` as
-JSON on stdin. `commands.markInReview`, when set, receives the same `sourceRef`
-and is run after groundcrew sees an open or merged PR on the ticket's worktree
-branch. If `commands.markInReview` is omitted, groundcrew treats in-review
-advancement as unsupported for that source and does not claim the transition
-succeeded. `${id}`, `${canonicalId}`, and `${name}` placeholders are shell-quoted
-before substitution.
+JSON on stdin. `commands.markInReview`, when set, receives the same `sourceRef` and is run
+after groundcrew sees an **open** PR on the ticket's worktree branch (in-progress
+tickets only). If omitted, groundcrew treats in-review advancement as unsupported
+for that source and does not claim the transition succeeded. `commands.markDone`,
+when set, receives the same `sourceRef` and is run after groundcrew sees a
+**merged** PR on the ticket's worktree branch (a merged PR never advances to
+in-review). If omitted, groundcrew treats done advancement as unsupported and
+leaves the ticket for the source's own integration to close out. `${id}`,
+`${canonicalId}`, and `${name}` placeholders are shell-quoted before substitution.
 
 ```json
 [

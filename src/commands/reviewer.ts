@@ -1,26 +1,34 @@
 /**
- * Per-iteration scanner that advances in-progress tickets to in-review once
- * their worktree has an open (or merged) pull request. Sits between the cleaner
- * and the dispatcher in each `orchestrate()` tick. A successfully-applied
- * transition frees a dispatch slot (the slot math counts only in-progress)
- * while leaving the worktree intact for review, since the cleaner only tears
- * down `done` tickets.
+ * Per-iteration scanner that advances a ticket based on its worktree's pull
+ * request state. Sits between the cleaner and the dispatcher in each
+ * `orchestrate()` tick.
  *
- * The write-back lands in the ticket source, not the in-memory `BoardState`, so
- * the dispatcher in the SAME tick still sees the ticket as in-progress; the slot
- * frees on the NEXT tick's `board.fetch()`. That one-tick latency is deliberate
- * — it keeps the reviewer from mutating shared `BoardState` mid-tick. One per
- * `orchestrate()`; stateless across iterations. Mirrors `Cleaner`.
+ * - An **open** PR on an **in-progress** ticket → `markInReview`: frees a
+ *   dispatch slot (slot math counts only in-progress) while leaving the
+ *   worktree intact for review, since the cleaner only tears down `done`.
+ * - A **merged** PR (on an in-progress or in-review ticket) → `markDone`:
+ *   the work has landed, so the ticket is terminal and the cleaner tears the
+ *   worktree down on a later tick. `merged` never routes to `in-review`.
  *
- * "Worktree has an open PR" is a v1 proxy for "the implementation is finished
- * and up for review". The detection + the open/merged condition live here in
- * the core reviewer (a push model) rather than inside any adapter, so a future
- * per-adapter `shouldAdvanceToReview` predicate is a clean additive change.
+ * Sources that don't implement `markDone` (e.g. Linear) return `unsupported`;
+ * the reviewer logs the skip and does nothing — there is no in-review
+ * fallback. (Linear's own GitHub integration moves merged issues to Done,
+ * which groundcrew observes via `fetch()`.)
+ *
+ * The write-back lands in the ticket source, not the in-memory `BoardState`,
+ * so the dispatcher in the SAME tick still sees prior state; the slot frees on
+ * the NEXT tick's `board.fetch()`. That one-tick latency is deliberate. One
+ * per `orchestrate()`; stateless across iterations. Mirrors `Cleaner`.
  */
 
 import type { Board } from "../lib/board.ts";
 import type { PullRequestSummary } from "../lib/pullRequests.ts";
-import { type BoardState, type Issue, naturalIdFromCanonical } from "../lib/ticketSource.ts";
+import {
+  type BoardState,
+  type CanonicalStatus,
+  type Issue,
+  naturalIdFromCanonical,
+} from "../lib/ticketSource.ts";
 import { debug, errorMessage, log, logEvent } from "../lib/util.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
 
@@ -53,10 +61,35 @@ export interface Reviewer {
   runOnce(arguments_: ReviewArguments): Promise<void>;
 }
 
-// A PR whose lifecycle means the work is up for (or past) review. `merged`
-// catches a PR that merged between ticks, so we still free the slot.
-function isReviewablePullRequest(pr: PullRequestSummary): boolean {
-  return pr.state === "open" || pr.state === "merged";
+type Transition = "done" | "in-review";
+
+// Maps a worktree's PRs to the transition its ticket should make. A merged PR
+// means the work landed → done; an open PR on an in-progress ticket means it's
+// up for review. `merged` wins over `open`. An open PR on an already in-review
+// ticket is a no-op (returns undefined). Closed-only PRs are ignored.
+function intendedTransition(
+  pullRequests: readonly PullRequestSummary[],
+  status: CanonicalStatus,
+): Transition | undefined {
+  if (pullRequests.some((pr) => pr.state === "merged")) {
+    return "done";
+  }
+  if (status === "in-progress" && pullRequests.some((pr) => pr.state === "open")) {
+    return "in-review";
+  }
+  return undefined;
+}
+
+// The PR to name in logs for a transition: the merged one for `done`, the open
+// one for `in-review`. Guaranteed to exist because intendedTransition only
+// returns a transition when a PR of the matching state is present.
+function pullRequestForTransition(
+  pullRequests: readonly PullRequestSummary[],
+  transition: Transition,
+): PullRequestSummary {
+  const state = transition === "done" ? "merged" : "open";
+  // oxlint-disable-next-line typescript/no-non-null-assertion -- intendedTransition guarantees a PR of this state exists
+  return pullRequests.find((pr) => pr.state === state)!;
 }
 
 function matchingWorktreeEntries(arguments_: {
@@ -79,13 +112,15 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
   async function runOnce(arguments_: ReviewArguments): Promise<void> {
     const { state, worktreeEntries, dryRun, signal } = arguments_;
 
-    const inProgress = state.issues.filter((issue) => issue.status === "in-progress");
-    if (inProgress.length === 0) {
+    const candidates = state.issues.filter(
+      (issue) => issue.status === "in-progress" || issue.status === "in-review",
+    );
+    if (candidates.length === 0) {
       return;
     }
 
-    for (const issue of inProgress) {
-      // oxlint-disable-next-line no-await-in-loop -- at most maximumInProgress (1-5) issues per tick; sequential keeps gh load low.
+    for (const issue of candidates) {
+      // oxlint-disable-next-line no-await-in-loop -- few candidates per tick; sequential keeps gh load low.
       await advanceIfReviewable({
         issue,
         worktreeEntries,
@@ -95,9 +130,10 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
     }
   }
 
-  // Idempotent after an applied transition: once advanced, the issue leaves
-  // `in-progress`, so it never reaches this scan again. Unsupported writebacks
-  // are skipped without claiming success and may retry on later ticks.
+  // Idempotent after an applied transition: once advanced, the issue leaves the
+  // in-progress/in-review candidate set, so it never reaches this scan again.
+  // Unsupported writebacks are skipped without claiming success and may retry
+  // on later ticks.
   async function advanceIfReviewable(arguments_: {
     issue: Issue;
     worktreeEntries: readonly WorktreeEntry[];
@@ -111,8 +147,8 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
     for (const entry of entries) {
       // The injected lookup is contracted never to reject (failures resolve to
       // []), but we still guard it so one bad lookup can never abort the tick
-      // and starve the other in-progress issues. A failure means "can't tell
-      // yet" → skip this worktree and retry next tick.
+      // and starve the other candidates. A failure means "can't tell yet" →
+      // skip this worktree and retry next tick.
       let pullRequests: readonly PullRequestSummary[];
       try {
         // oxlint-disable-next-line no-await-in-loop -- a ticket almost always has one worktree; sequential lookups are fine.
@@ -125,51 +161,67 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
         debug(`PR lookup failed for ${ticket} (${entry.branchName}): ${errorMessage(error)}`);
         continue;
       }
-      const reviewable = pullRequests.find(isReviewablePullRequest);
-      if (reviewable === undefined) {
+      const transition = intendedTransition(pullRequests, issue.status);
+      if (transition === undefined) {
         continue;
       }
+      const pullRequest = pullRequestForTransition(pullRequests, transition);
       if (dryRun) {
-        log(`[dry-run] Would advance ${ticket} to in-review (PR ${reviewable.url})`);
-        logEvent("review", { outcome: "skipped", reason: "dry_run", ticket, pr: reviewable.url });
+        log(`[dry-run] Would advance ${ticket} to ${transition} (PR ${pullRequest.url})`);
+        logEvent("review", {
+          outcome: "skipped",
+          reason: "dry_run",
+          ticket,
+          pr: pullRequest.url,
+          to: transition,
+        });
         return;
       }
-      // oxlint-disable-next-line no-await-in-loop -- single write-back then return; never iterates past the first reviewable worktree.
-      await advance({ issue, ticket, pullRequest: reviewable });
+      // oxlint-disable-next-line no-await-in-loop -- single write-back then return; never iterates past the first actionable worktree.
+      await advance({ issue, ticket, pullRequest, transition });
       return;
     }
   }
 
   // A writeback failure (shell/Linear error) is logged and swallowed: the
-  // ticket stays in-progress and is retried next tick, exactly like a failed
+  // ticket keeps its status and is retried next tick, exactly like a failed
   // lookup. We never let one ticket's writeback abort the others' reviews.
   async function advance(arguments_: {
     issue: Issue;
     ticket: string;
     pullRequest: PullRequestSummary;
+    transition: Transition;
   }): Promise<void> {
-    const { issue, ticket, pullRequest } = arguments_;
+    const { issue, ticket, pullRequest, transition } = arguments_;
     try {
-      const result = await board.markInReview(issue);
+      const result =
+        transition === "done" ? await board.markDone(issue) : await board.markInReview(issue);
       if (result.outcome === "unsupported") {
-        log(`Skipped advancing ${ticket} to in-review: ${result.reason}`);
+        log(`Skipped advancing ${ticket} to ${transition}: ${result.reason}`);
         logEvent("review", {
           outcome: "skipped",
           reason: "unsupported",
           ticket,
+          to: transition,
         });
         return;
       }
-      log(`Advanced ${ticket} to in-review (PR ${pullRequest.url})`);
+      log(`Advanced ${ticket} to ${transition} (PR ${pullRequest.url})`);
       logEvent("review", {
         outcome: "advanced",
         ticket,
         pr: pullRequest.url,
         state: pullRequest.state,
+        to: transition,
       });
     } catch (error) {
-      log(`Failed to advance ${ticket} to in-review: ${errorMessage(error)}`);
-      logEvent("review", { outcome: "failed", reason: "writeback_failed", ticket });
+      log(`Failed to advance ${ticket} to ${transition}: ${errorMessage(error)}`);
+      logEvent("review", {
+        outcome: "failed",
+        reason: "writeback_failed",
+        ticket,
+        to: transition,
+      });
     }
   }
 

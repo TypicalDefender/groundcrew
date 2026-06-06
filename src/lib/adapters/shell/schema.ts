@@ -55,6 +55,7 @@ export const shellAdapterConfigSchema = z.object({
     resolveOne: z.string().optional(),
     markInProgress: z.string().optional(),
     markInReview: z.string().optional(),
+    markDone: z.string().optional(),
   }),
   cwd: z.string().optional(),
   timeouts: z
@@ -67,6 +68,7 @@ export const shellAdapterConfigSchema = z.object({
       resolveOne: z.number().int().positive().optional(),
       markInProgress: z.number().int().positive().optional(),
       markInReview: z.number().int().positive().optional(),
+      markDone: z.number().int().positive().optional(),
     })
     .optional(),
   env: z.record(z.string(), z.string()).optional(),

@@ -476,4 +476,59 @@ describe(createShellTicketSource, () => {
     await expect(source.markInReview(issue)).resolves.toStrictEqual({ outcome: "applied" });
     expect(readFileSync(stdinCapture, "utf8")).toBe(JSON.stringify(sourceRef));
   });
+
+  it("markDone() reports unsupported when not configured", async () => {
+    const source = createShellTicketSource(
+      { kind: "shell", name: "test", commands: { fetch: "echo '[]'" } },
+      fakeContext,
+    );
+    const issue: CanonicalIssue = {
+      id: "test:x-1",
+      source: "test",
+      title: "",
+      description: "",
+      status: "in-review",
+      repository: undefined,
+      model: undefined,
+      assignee: "",
+      updatedAt: "",
+      blockers: [],
+      hasMoreBlockers: false,
+      sourceRef: {},
+    };
+    await expect(source.markDone?.(issue)).resolves.toStrictEqual({
+      outcome: "unsupported",
+      reason: 'shell source "test" has no commands.markDone configured',
+    });
+  });
+
+  it("markDone() runs the configured command with substituted id and piped sourceRef on stdin", async () => {
+    const stdinCapture = path.join(dir.path, "done-stdin-capture.txt");
+    const doneScript = dir.writeScript("done.sh", `cat > "${stdinCapture}"; echo "done $1"`);
+    const source = createShellTicketSource(
+      {
+        kind: "shell",
+        name: "test",
+        commands: { fetch: "echo '[]'", markDone: `${doneScript} \${id}` },
+      },
+      fakeContext,
+    );
+    const sourceRef = { path: "/tmp/p.md", extra: { nested: 9 } };
+    const issue: CanonicalIssue = {
+      id: "test:x-1",
+      source: "test",
+      title: "",
+      description: "",
+      status: "in-review",
+      repository: undefined,
+      model: undefined,
+      assignee: "",
+      updatedAt: "",
+      blockers: [],
+      hasMoreBlockers: false,
+      sourceRef,
+    };
+    await expect(source.markDone?.(issue)).resolves.toStrictEqual({ outcome: "applied" });
+    expect(readFileSync(stdinCapture, "utf8")).toBe(JSON.stringify(sourceRef));
+  });
 });

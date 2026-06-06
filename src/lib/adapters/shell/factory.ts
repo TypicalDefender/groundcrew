@@ -12,6 +12,7 @@
  *    in MVP-2.
  *  - `markInProgress` absent → silent no-op.
  *  - `markInReview` absent → reports unsupported.
+ *  - `markDone` absent → reports unsupported.
  *  - `fetch` is required by the Zod schema.
  */
 
@@ -20,6 +21,7 @@ import {
   toCanonicalId,
   type Blocker as CanonicalBlocker,
   type Issue as CanonicalIssue,
+  type MarkDoneResult,
   type MarkInReviewResult,
   type TicketSource,
 } from "../../ticketSource.ts";
@@ -38,6 +40,7 @@ interface ResolvedShellTimeouts {
   resolveOne: number;
   markInProgress: number;
   markInReview: number;
+  markDone: number;
 }
 
 const DEFAULT_TIMEOUTS: ResolvedShellTimeouts = {
@@ -46,6 +49,7 @@ const DEFAULT_TIMEOUTS: ResolvedShellTimeouts = {
   resolveOne: 10_000,
   markInProgress: 10_000,
   markInReview: 10_000,
+  markDone: 10_000,
 };
 
 function mergeTimeouts(overrides: ShellAdapterConfig["timeouts"]): ResolvedShellTimeouts {
@@ -55,6 +59,7 @@ function mergeTimeouts(overrides: ShellAdapterConfig["timeouts"]): ResolvedShell
     resolveOne: overrides?.resolveOne ?? DEFAULT_TIMEOUTS.resolveOne,
     markInProgress: overrides?.markInProgress ?? DEFAULT_TIMEOUTS.markInProgress,
     markInReview: overrides?.markInReview ?? DEFAULT_TIMEOUTS.markInReview,
+    markDone: overrides?.markDone ?? DEFAULT_TIMEOUTS.markDone,
   };
 }
 
@@ -183,6 +188,16 @@ export function createShellTicketSource(
         };
       }
       await invokeWriteback(config.commands.markInReview, timeouts.markInReview, issue);
+      return { outcome: "applied" };
+    },
+    async markDone(issue: CanonicalIssue): Promise<MarkDoneResult> {
+      if (config.commands.markDone === undefined) {
+        return {
+          outcome: "unsupported",
+          reason: `shell source "${sourceName}" has no commands.markDone configured`,
+        };
+      }
+      await invokeWriteback(config.commands.markDone, timeouts.markDone, issue);
       return { outcome: "applied" };
     },
   };
