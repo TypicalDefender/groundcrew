@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -224,7 +224,14 @@ export interface Config {
     definitions?: Record<string, UserAgentDefinition>;
   };
   prompts?: {
+    /** Inline initial prompt. Mutually exclusive with `promptFile`. */
     initial?: string;
+    /**
+     * Path to a UTF-8 file whose contents become the initial prompt. Resolved
+     * relative to the config file's directory; `~` is expanded; absolute paths
+     * are used as-is. Mutually exclusive with `initial`.
+     */
+    promptFile?: string;
   };
   /**
    * Terminal session manager that hosts agent processes. Defaults to
@@ -917,7 +924,35 @@ function normalizeWorkspace(workspace: Config["workspace"]): ResolvedConfig["wor
   };
 }
 
-function applyDefaults(user: Config): ResolvedConfig {
+/**
+ * Resolve the initial prompt from the user's `prompts` block. `promptFile` and
+ * `initial` are mutually exclusive; when neither is set the built-in default is
+ * used. A `promptFile` is resolved relative to the config file's directory
+ * (matching the `.ts` `import.meta.url` behavior), with `~` expanded and
+ * absolute paths used as-is, then read at load time.
+ */
+function resolveInitialPrompt(prompts: Config["prompts"], configDir: string): string {
+  const { initial, promptFile } = prompts ?? {};
+  if (initial !== undefined && promptFile !== undefined) {
+    fail("prompts: set either `initial` or `promptFile`, not both");
+  }
+
+  if (promptFile !== undefined) {
+    requireString(promptFile, "prompts.promptFile");
+
+    const expanded = expandHome(promptFile);
+    const resolved = path.isAbsolute(expanded) ? expanded : path.resolve(configDir, expanded);
+    try {
+      return readFileSync(resolved, "utf8");
+    } catch (error) {
+      fail(`prompts.promptFile could not be read at ${resolved}: ${String(error)}`);
+    }
+  }
+
+  return initial ?? DEFAULT_PROMPT_INITIAL;
+}
+
+function applyDefaults(user: Config, configDir: string): ResolvedConfig {
   // Guard the top-level shape before reading nested fields, so a
   // malformed runtime config produces a `groundcrew config: ...` error
   // instead of a raw `TypeError: Cannot read properties of undefined`.
@@ -963,7 +998,7 @@ function applyDefaults(user: Config): ResolvedConfig {
       definitions: mergeDefinitions(user.agents?.definitions),
     },
     prompts: {
-      initial: user.prompts?.initial ?? DEFAULT_PROMPT_INITIAL,
+      initial: resolveInitialPrompt(user.prompts, configDir),
     },
     workspaceKind: normalizeWorkspaceKind(user.workspaceKind, "workspaceKind") ?? "auto",
     local: {
@@ -978,7 +1013,6 @@ function applyDefaults(user: Config): ResolvedConfig {
 }
 
 function validatePromptPlaceholders(template: string): void {
-  /* v8 ignore next @preserve -- a no-placeholder prompt is unusual but tests with placeholders consistently match at least once */
   const placeholders = template.match(PROMPT_PLACEHOLDER_RE) ?? [];
   const unknown = placeholders.find((placeholder) => !ALLOWED_PROMPT_PLACEHOLDERS.has(placeholder));
   if (unknown !== undefined) {
@@ -1211,7 +1245,7 @@ export async function loadConfigWithSource(): Promise<Readonly<LoadedConfig>> {
   debug(`Loaded config from ${filepath}`);
 
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- runtime fields are validated by applyDefaults/validate
-  const resolved = applyDefaults(userConfig as unknown as Config);
+  const resolved = applyDefaults(userConfig as unknown as Config, path.dirname(filepath));
 
   validate(resolved);
 

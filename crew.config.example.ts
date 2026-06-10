@@ -120,6 +120,9 @@ export default {
   //   // `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/initial-prompt.md`.
   //   // If you uncomment this, also uncomment the readFileSync import above.
   //   initial: readFileSync(new URL("./initial-prompt.md", import.meta.url), "utf8"),
+  //   // Or, instead of `initial`, point at a file (also works in crew.config.json).
+  //   // Resolved relative to this config's directory; `~` and absolute paths work.
+  //   // promptFile: "initial-prompt.md",
   // },
   //
   // // Terminal session manager. "auto" picks cmux when on PATH, else tmux.

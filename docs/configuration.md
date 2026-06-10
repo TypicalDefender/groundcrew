@@ -157,6 +157,22 @@ export default {
 
 This keeps package defaults portable while letting your private config reference team-specific statuses, tools, plugins, or review loops.
 
+### Loading the prompt from a file (`prompts.promptFile`)
+
+`readFileSync` works for `.ts` configs but not for `crew.config.json`, which has no way to reference an external file. Set `prompts.promptFile` instead and groundcrew reads the file's contents into the initial prompt at load time:
+
+```json
+{
+  "prompts": {
+    "promptFile": "prompt-initial.md"
+  }
+}
+```
+
+- The path is resolved **relative to the config file's directory** (matching the `.ts` `import.meta.url` behavior); a leading `~` is expanded and absolute paths are used as-is.
+- `prompts.initial` and `prompts.promptFile` are **mutually exclusive** — setting both is a hard error. Set neither to keep the built-in default.
+- Placeholder validation runs on the loaded file contents, so an unknown `{{placeholder}}` in the file fails the same way it would inline.
+
 ## Default Hooks
 
 Repo-local `.groundcrew/config.json` is the preferred place for
@@ -199,7 +215,8 @@ and hook contract.
 | `models.definitions.<name>.sandbox`      | optional             | Docker Sandboxes binding for the model. Required at launch when `local.runner` resolves to `sdx`. Field: `agent` (required sbx agent name). Groundcrew assumes the `groundcrew-<agent>` sandbox already exists.                                                                                                                                                                                                                                                                                                             |
 | `models.definitions.<name>.preLaunch`    | optional             | Host-only shell snippet run before the agent exec and outside Safehouse/sdx. Exports survive into the launch shell; under the default `safehouse` runner they are only forwarded to the agent when listed via `preLaunchEnv` or when `cmd` includes its own `safehouse --env-pass=NAMES`. `{{worktree}}` is substituted. A non-zero exit aborts launch. Not supported when `local.runner` resolves to `sdx` in v1.                                                                                                          |
 | `models.definitions.<name>.preLaunchEnv` | optional             | Companion to `preLaunch`: list of env var names to append to groundcrew's `safehouse-clearance` `--env-pass=` flag, so `preLaunch` exports reach the agent without overriding `cmd` and losing the project's egress allowlist. Each entry must match `[A-Za-z_][A-Za-z0-9_]*`. Under `runner: "none"` exports already inherit and `preLaunchEnv` is a no-op. An empty array is a uniform no-op in every runner; a non-empty list is rejected when `cmd` already starts with `safehouse` or when `runner` resolves to `sdx`. |
-| `prompts.initial`                        | unattended template  | First message sent to the agent: the execution wrapper around each task. The task description is the task-specific prompt. Placeholders: `{{task}}`, `{{worktree}}`, `{{title}}`, `{{description}}`. Override only to change the execution contract for every task, such as team-wide review rules or tool conventions.                                                                                                                                                                                                     |
+| `prompts.initial`                        | unattended template  | First message sent to the agent: the execution wrapper around each task. The task description is the task-specific prompt. Placeholders: `{{task}}`, `{{worktree}}`, `{{title}}`, `{{description}}`. Override only to change the execution contract for every task, such as team-wide review rules or tool conventions. Mutually exclusive with `prompts.promptFile`.                                                                                                                                                       |
+| `prompts.promptFile`                     | optional             | Path to a UTF-8 file whose contents become `prompts.initial`, read at load time. Resolved relative to the config file's directory; `~` is expanded and absolute paths are used as-is. The JSON-friendly alternative to inlining a large prompt or `readFileSync`. Mutually exclusive with `prompts.initial`.                                                                                                                                                                                                                |
 | `workspaceKind`                          | `"auto"`             | Terminal session manager. `"auto"` picks `cmux` when on PATH, else `tmux`. Set to `"cmux"`, `"tmux"`, or `"zellij"` to fail loudly when the chosen backend is missing.                                                                                                                                                                                                                                                                                                                                                      |
 | `local.runner`                           | `"auto"`             | Local isolation backend. `"auto"` uses `safehouse` on macOS and `sdx` on Linux/WSL. Explicit: `"safehouse"`, `"sdx"`, `"none"`. `"none"` is never picked implicitly.                                                                                                                                                                                                                                                                                                                                                        |
 | `logging.file`                           | XDG state path       | Append-mode log file. `log()` / `logEvent()` tee here in addition to stdout. Defaults to `${XDG_STATE_HOME:-$HOME/.local/state}/groundcrew/groundcrew.log`.                                                                                                                                                                                                                                                                                                                                                                 |
