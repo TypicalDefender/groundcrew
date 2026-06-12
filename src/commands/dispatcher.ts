@@ -17,6 +17,7 @@ import {
   type Issue,
   naturalIdFromCanonical,
 } from "../lib/taskSource.ts";
+import { listRunStates } from "../lib/runState.ts";
 import type { UsageByAgent } from "../lib/usage.ts";
 import { errorMessage, failMark, log, logEvent, styleWarning } from "../lib/util.ts";
 import { type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
@@ -272,6 +273,16 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     const fetchedUsage = await usagePromise;
     const exhausted = buildExhaustedSet(fetchedUsage);
 
+    // Operator snoozes live on run states; expired entries are ignored by
+    // the classifier, so no cleanup pass is needed here.
+    const snoozes = new Map(
+      listRunStates(config).flatMap((runState) =>
+        runState.snoozedUntil === undefined
+          ? []
+          : [[runState.task, runState.snoozedUntil] as const],
+      ),
+    );
+
     const verdicts = classifyEligibility({
       config,
       unblocked: dispatchableUnblocked,
@@ -281,6 +292,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       exhausted,
       slots,
       dryRun,
+      snoozes,
     });
 
     const starts = verdicts.filter((v): v is StartVerdict => v.kind === "start");

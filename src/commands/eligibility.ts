@@ -21,6 +21,7 @@ const MINUTES_PER_WEEK = DAYS_PER_WEEK * MINUTES_PER_DAY;
 type SkipReason =
   | "blocked"
   | "blockers_paginated"
+  | "snoozed"
   | "agent_any_capacity"
   | "agent_exhausted"
   | "workspace_list_unavailable"
@@ -87,6 +88,14 @@ export interface ClassifyArguments {
   /** Maximum number of `start` verdicts to produce. */
   slots: number;
   dryRun: boolean;
+  /**
+   * Operator snoozes by natural task id (ISO expiry), read from run
+   * states. Expired entries are ignored, so a stale `snoozedUntil` left in
+   * a run state never needs cleanup.
+   */
+  snoozes?: ReadonlyMap<string, string>;
+  /** Clock for snooze-expiry comparison; defaults to now. */
+  now?: Date;
 }
 
 interface BlockerClassification {
@@ -276,6 +285,8 @@ export function classifyBlockers(todo: readonly GroundcrewIssue[]): BlockerClass
 export function classifyEligibility(arguments_: ClassifyArguments): Verdict[] {
   const { config, unblocked, worktreeEntries, workspaceProbe, usage, exhausted, slots, dryRun } =
     arguments_;
+  const snoozes = arguments_.snoozes ?? new Map<string, string>();
+  const now = arguments_.now ?? new Date();
 
   const verdicts: Verdict[] = [];
   let started = 0;
@@ -286,6 +297,17 @@ export function classifyEligibility(arguments_: ClassifyArguments): Verdict[] {
       // dispatcher behaves the same: it stops scanning Todo issues once the
       // slot count is filled, so unreached issues never produce a verdict.
       break;
+    }
+
+    const snoozedUntil = snoozes.get(naturalIdFromCanonical(original.id));
+    if (snoozedUntil !== undefined && new Date(snoozedUntil).getTime() > now.getTime()) {
+      verdicts.push({
+        kind: "skip",
+        issue: original,
+        message: `Skipping ${original.id}: snoozed until ${snoozedUntil}`,
+        eventReason: "snoozed",
+      });
+      continue;
     }
 
     let resolved = original;

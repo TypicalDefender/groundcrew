@@ -48,6 +48,11 @@ export interface RunState {
   pulse?: PulseState;
   /** When the pulse last changed value (not when it was last observed). */
   pulseChangedAt?: string;
+  /**
+   * Operator snooze: dispatch eligibility skips this task until the ISO
+   * timestamp passes. The reviewer still observes the task's PR.
+   */
+  snoozedUntil?: string;
   /** URL of the task's pull request, recorded by the reviewer each tick. */
   prUrl?: string;
   prNumber?: number;
@@ -172,6 +177,7 @@ interface OptionalRunStateFields {
   completionTaskId: string | undefined;
   pulse: PulseState | undefined;
   pulseChangedAt: string | undefined;
+  snoozedUntil: string | undefined;
   prUrl: string | undefined;
   prNumber: number | undefined;
   ci: CiStatus | undefined;
@@ -188,6 +194,7 @@ function presentOptionalFields(fields: OptionalRunStateFields): Partial<RunState
     ...(fields.completionTaskId === undefined ? {} : { completionTaskId: fields.completionTaskId }),
     ...(fields.pulse === undefined ? {} : { pulse: fields.pulse }),
     ...(fields.pulseChangedAt === undefined ? {} : { pulseChangedAt: fields.pulseChangedAt }),
+    ...(fields.snoozedUntil === undefined ? {} : { snoozedUntil: fields.snoozedUntil }),
     ...(fields.prUrl === undefined ? {} : { prUrl: fields.prUrl }),
     ...(fields.prNumber === undefined ? {} : { prNumber: fields.prNumber }),
     ...(fields.ci === undefined ? {} : { ci: fields.ci }),
@@ -216,6 +223,7 @@ function parseRunState(value: unknown): RunState | undefined {
   // Unknown enum values degrade to "field not recorded", not a corrupt record.
   const pulse = isPulseState(value["pulse"]) ? value["pulse"] : undefined;
   const pulseChangedAt = stringField(value, "pulseChangedAt");
+  const snoozedUntil = stringField(value, "snoozedUntil");
   const prUrl = stringField(value, "prUrl");
   const prNumber = positiveIntegerField(value, "prNumber");
   const ci = isCiStatus(value["ci"]) ? value["ci"] : undefined;
@@ -255,6 +263,7 @@ function parseRunState(value: unknown): RunState | undefined {
       completionTaskId,
       pulse,
       pulseChangedAt,
+      snoozedUntil,
       prUrl,
       prNumber,
       ci,
@@ -324,10 +333,11 @@ export function recordRunState(input: RecordRunStateInput): RunState {
   const title = input.state.title ?? existing?.title;
   const url = input.state.url ?? existing?.url;
   const completionTaskId = input.state.completionTaskId ?? existing?.completionTaskId;
-  // Pulse and PR fields are only ever written by their record functions;
-  // lifecycle transitions must not erase the last observations.
+  // Pulse, snooze, and PR fields are only ever written by their record
+  // functions; lifecycle transitions must not erase the last observations.
   const pulse = existing?.pulse;
   const pulseChangedAt = existing?.pulseChangedAt;
+  const snoozedUntil = existing?.snoozedUntil;
   const prUrl = existing?.prUrl;
   const prNumber = existing?.prNumber;
   const ci = existing?.ci;
@@ -351,6 +361,7 @@ export function recordRunState(input: RecordRunStateInput): RunState {
       completionTaskId,
       pulse,
       pulseChangedAt,
+      snoozedUntil,
       prUrl,
       prNumber,
       ci,
@@ -416,6 +427,33 @@ export function recordTaskPulse(input: RecordTaskPulseInput): RunState | undefin
   const pulseChangedAt =
     existing.pulse === input.pulse ? (existing.pulseChangedAt ?? observedAt) : observedAt;
   const state: RunState = { ...existing, pulse: input.pulse, pulseChangedAt };
+  writeState(input.config, state);
+  return state;
+}
+
+export interface RecordTaskSnoozeInput {
+  config: ResolvedConfig;
+  task: string;
+  /** Omit to clear the snooze. */
+  until?: Date;
+}
+
+/**
+ * Set or clear the operator snooze without bumping `updatedAt` — a snooze
+ * is a scheduling decision, not progress on the task.
+ */
+export function recordTaskSnooze(input: RecordTaskSnoozeInput): RunState | undefined {
+  const existing = readRunState(input.config, input.task);
+  if (existing === undefined) {
+    return undefined;
+  }
+  const state: RunState = {
+    ...existing,
+    ...(input.until === undefined ? {} : { snoozedUntil: input.until.toISOString() }),
+  };
+  if (input.until === undefined) {
+    delete state.snoozedUntil;
+  }
   writeState(input.config, state);
   return state;
 }

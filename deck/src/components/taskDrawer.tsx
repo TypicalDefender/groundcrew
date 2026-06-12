@@ -167,6 +167,11 @@ export function TaskDrawer({
                 <Mono>{run.pulseChangedAt}</Mono>
               </Row>
             )}
+            {run.snoozedUntil === undefined ? undefined : (
+              <Row label="snoozed until">
+                <Mono>{run.snoozedUntil}</Mono>
+              </Row>
+            )}
           </Section>
         )}
 

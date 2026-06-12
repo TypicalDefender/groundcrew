@@ -1,4 +1,5 @@
 import type { ResolvedConfig } from "../lib/config.ts";
+import { listRunStates } from "../lib/runState.ts";
 import { canonicalLinearIssue, canonicalShellIssue } from "../lib/testing/canonicalFixtures.ts";
 import { makeBoard } from "../testHelpers/boardFixtures.ts";
 import type { BoardState, Issue } from "../lib/taskSource.ts";
@@ -13,6 +14,14 @@ import { setupWorkspace } from "./setupWorkspace.ts";
 vi.mock(import("./setupWorkspace.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, setupWorkspace: vi.fn<typeof setupWorkspace>() };
+});
+// listRunStates is stubbed empty so these tests stay isolated: makeConfig
+// points logging at shared /tmp, where real run-state files could leak
+// snoozes into these tests. Snooze gating itself is covered in
+// eligibility.test.ts.
+vi.mock(import("../lib/runState.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, listRunStates: vi.fn<typeof actual.listRunStates>(() => []) };
 });
 vi.mock(import("../lib/workspaces.ts"), async (importOriginal) => {
   const actual = await importOriginal();
@@ -32,6 +41,7 @@ vi.mock(import("../lib/workspaces.ts"), async (importOriginal) => {
 
 const setupMock = vi.mocked(setupWorkspace);
 const workspacesProbeMock = vi.mocked(workspaces.probe);
+const listRunStatesMock = vi.mocked(listRunStates);
 
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
@@ -652,6 +662,53 @@ describe(createDispatcher, () => {
       expect(setupMock).not.toHaveBeenCalled();
       expect(board.markInProgress).not.toHaveBeenCalled();
       expect(consoleLog.output()).toContain("Run `crew cleanup");
+    });
+
+    it("skips a Todo task that the operator snoozed via its run state", async () => {
+      // Once: clearAllMocks() does not drop persistent return values, and a
+      // sticky snooze would leak into every later dispatch test.
+      listRunStatesMock.mockReturnValueOnce([
+        {
+          task: "team-1",
+          repository: "repo-a",
+          agent: "claude",
+          worktreeDir: "/work/repo-a-team-1",
+          branchName: "dev-team-1",
+          workspaceName: "team-1",
+          state: "interrupted",
+          createdAt: "2026-06-13T00:00:00.000Z",
+          updatedAt: "2026-06-13T00:00:00.000Z",
+          resumeCount: 0,
+          snoozedUntil: "2099-01-01T00:00:00.000Z",
+        },
+        {
+          // No snooze: exercises the map-building filter's other branch.
+          task: "team-9",
+          repository: "repo-a",
+          agent: "claude",
+          worktreeDir: "/work/repo-a-team-9",
+          branchName: "dev-team-9",
+          workspaceName: "team-9",
+          state: "interrupted",
+          createdAt: "2026-06-13T00:00:00.000Z",
+          updatedAt: "2026-06-13T00:00:00.000Z",
+          resumeCount: 0,
+        },
+      ]);
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
+
+      await dispatcher.runOnce({
+        state: boardOf([todoIssue()]),
+        worktreeEntries: [],
+        usage: async () => ({}),
+        dryRun: false,
+      });
+
+      expect(setupMock).not.toHaveBeenCalled();
+      expect(consoleLog.output()).toContain(
+        "Skipping linear:team-1: snoozed until 2099-01-01T00:00:00.000Z",
+      );
     });
 
     it("retries next iteration when the workspace list is unavailable", async () => {

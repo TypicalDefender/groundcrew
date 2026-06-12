@@ -214,6 +214,59 @@ describe(classifyBlockers, () => {
 });
 
 describe(classifyEligibility, () => {
+  describe("snooze", () => {
+    const NOW = new Date("2026-06-13T08:00:00.000Z");
+
+    it("emits a `snoozed` skip while the snooze is in the future", () => {
+      const verdicts = classifyEligibility(
+        defaultArguments({
+          snoozes: new Map([["team-1", "2026-06-13T10:00:00.000Z"]]),
+          now: NOW,
+        }),
+      );
+
+      expect(verdicts[0]).toMatchObject({
+        kind: "skip",
+        eventReason: "snoozed",
+        message: "Skipping linear:team-1: snoozed until 2026-06-13T10:00:00.000Z",
+      });
+    });
+
+    it("starts a task whose snooze has expired without any cleanup", () => {
+      const verdicts = classifyEligibility(
+        defaultArguments({
+          snoozes: new Map([["team-1", "2026-06-13T07:59:59.000Z"]]),
+          now: NOW,
+        }),
+      );
+
+      expect(verdicts[0]).toMatchObject({ kind: "start" });
+    });
+
+    it("only snoozes the matching task and frees its slot for others", () => {
+      const second = asGroundcrewIssue(
+        canonicalLinearIssue({
+          naturalId: "team-2",
+          status: "todo",
+          repository: "repo-a",
+          agent: "claude",
+        }),
+      );
+      const verdicts = classifyEligibility(
+        defaultArguments({
+          unblocked: [todoIssue(), second],
+          snoozes: new Map([["team-1", "2026-06-13T10:00:00.000Z"]]),
+          now: NOW,
+          slots: 1,
+        }),
+      );
+
+      expect(verdicts).toHaveLength(2);
+      expect(verdicts[0]).toMatchObject({ kind: "skip", eventReason: "snoozed" });
+      expect(verdicts[1]).toMatchObject({ kind: "start", issue: { id: "linear:team-2" } });
+    });
+  });
+
   describe("agent-any resolution", () => {
     it("resolves agent-any to the agent with the most session capacity", () => {
       const verdicts = classifyEligibility(

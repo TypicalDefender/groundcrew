@@ -25,6 +25,7 @@ export { loadConfig } from "./lib/config.ts";
 export { isPlainTaskId } from "./lib/taskId.ts";
 export { clearPause, pausePath, readPause, recordPause, type PauseState } from "./lib/pause.ts";
 export { parseDurationMilliseconds } from "./commands/pause.ts";
+export { parseSnoozeUntil } from "./commands/snooze.ts";
 export { workspaces, type WorkspaceSendResult } from "./lib/workspaces.ts";
 export {
   collectFleetSnapshot,
@@ -59,6 +60,8 @@ export {
   type RecordTaskPulseInput,
   recordTaskPullRequest,
   type RecordTaskPullRequestInput,
+  recordTaskSnooze,
+  type RecordTaskSnoozeInput,
   removeRunState,
   runStateDirectory,
   runStatePath,

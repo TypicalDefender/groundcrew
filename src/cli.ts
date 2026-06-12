@@ -6,6 +6,7 @@ import { initConfigCli } from "./commands/init.ts";
 import { interruptWorkspaceCli } from "./commands/interruptWorkspace.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
 import { pauseCli, wakeCli } from "./commands/pause.ts";
+import { snoozeCli } from "./commands/snooze.ts";
 import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
 import { sourceCli } from "./commands/source.ts";
@@ -212,6 +213,11 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     summary: "Wake a paused crew so the next tick resumes dispatch",
     usage: "",
     invoke: wakeCli,
+  },
+  snooze: {
+    summary: "Hold one task out of dispatch until a time (the reviewer still watches its PR)",
+    usage: "<task> (--until <time|duration> | --clear)",
+    invoke: snoozeCli,
   },
   stop: {
     summary: "Stop a live task workspace while preserving its worktree",

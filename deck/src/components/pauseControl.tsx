@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { PauseState } from "@clipboard-health/groundcrew";
 
 import type { ActionOutcome } from "@/components/actionBar";
+import { ChoiceMenu } from "@/components/choiceMenu";
 import { postAction } from "@/lib/postAction";
 
 const PAUSE_CHOICES: readonly { label: string; for?: string }[] = [
@@ -90,31 +91,19 @@ export function PauseControl({
         {busy ? "Pausing…" : "Pause crew"}
       </button>
       {menuOpen ? (
-        <div
-          className="absolute right-0 top-9 z-40 w-44 rounded-lg border p-1 shadow-lg"
-          style={{ background: "var(--surface-card)", borderColor: "var(--border-base)" }}
-          role="menu"
-          aria-label="Pause duration"
-        >
-          {PAUSE_CHOICES.map((choice) => (
-            <button
-              key={choice.label}
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                void send(
-                  "/api/pause",
-                  choice.for === undefined ? {} : { for: choice.for },
-                  `Crew paused (${choice.label.toLowerCase()})`,
-                );
-              }}
-              className="block w-full rounded px-3 py-1.5 text-left text-xs hover:bg-black/5"
-              style={{ color: "var(--text-base)" }}
-            >
-              {choice.label}
-            </button>
-          ))}
-        </div>
+        <ChoiceMenu
+          ariaLabel="Pause duration"
+          align="right"
+          choices={PAUSE_CHOICES.map((choice) => ({ key: choice.label, label: choice.label }))}
+          onChoose={(key) => {
+            const choice = PAUSE_CHOICES.find((candidate) => candidate.label === key);
+            void send(
+              "/api/pause",
+              choice?.for === undefined ? {} : { for: choice.for },
+              `Crew paused (${key.toLowerCase()})`,
+            );
+          }}
+        />
       ) : undefined}
     </div>
   );

@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import type { FleetTask } from "@clipboard-health/groundcrew";
 
+import { SnoozeControl } from "@/components/snoozeControl";
 import { postAction } from "@/lib/postAction";
 
 export interface ActionOutcome {
@@ -122,6 +123,8 @@ export function ActionBar({
             {busy === action.key ? `${action.label}…` : action.label}
           </button>
         ))}
+
+      {task.run === undefined ? undefined : <SnoozeControl task={task} onOutcome={onOutcome} />}
 
       {confirming === undefined ? undefined : (
         <ConfirmDialog

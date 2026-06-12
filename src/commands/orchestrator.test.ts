@@ -81,6 +81,12 @@ vi.mock(import("../lib/pause.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, readPause: vi.fn<typeof readPause>() };
 });
+// Same isolation story for run states: the dispatcher reads snoozes from
+// listRunStates each tick, and /tmp/runs must not leak into these tests.
+vi.mock(import("../lib/runState.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, listRunStates: vi.fn<typeof actual.listRunStates>(() => []) };
+});
 vi.mock(import("./setupWorkspace.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, setupWorkspace: vi.fn<typeof setupWorkspace>() };
