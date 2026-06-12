@@ -716,4 +716,43 @@ describe("run state store", () => {
     expect(actual?.prNumber).toBeUndefined();
     expect(actual?.prUrl).toBe("https://github.com/x/y/pull/3");
   });
+
+  it("parses autopilot fields strictly and degrades malformed values to absent", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "running",
+      },
+    });
+    const statePath = runStatePath(config, "team-1");
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- mutating our own freshly-written fixture JSON
+    const raw = JSON.parse(readFileSync(statePath, "utf8")) as Record<string, unknown>;
+
+    raw["autopilotEnabled"] = "yes";
+    raw["autopilotActivity"] = "lots";
+    writeFileSync(statePath, JSON.stringify(raw));
+    expect(readRunState(config, "team-1")?.autopilotEnabled).toBeUndefined();
+    expect(readRunState(config, "team-1")?.autopilotActivity).toBeUndefined();
+
+    raw["autopilotActivity"] = ["not an object"];
+    writeFileSync(statePath, JSON.stringify(raw));
+    expect(readRunState(config, "team-1")?.autopilotActivity).toBeUndefined();
+
+    raw["autopilotActivity"] = [{ at: "x", kind: "reboot", detail: "y" }];
+    writeFileSync(statePath, JSON.stringify(raw));
+    expect(readRunState(config, "team-1")?.autopilotActivity).toBeUndefined();
+
+    raw["autopilotEnabled"] = false;
+    raw["autopilotActivity"] = [{ at: "x", kind: "merge", detail: "merged" }];
+    writeFileSync(statePath, JSON.stringify(raw));
+    const parsed = readRunState(config, "team-1");
+    expect(parsed?.autopilotEnabled).toBe(false);
+    expect(parsed?.autopilotActivity).toStrictEqual([{ at: "x", kind: "merge", detail: "merged" }]);
+  });
 });

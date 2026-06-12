@@ -68,6 +68,17 @@ export interface RunState {
   nudgedCommentIds?: readonly string[];
   /** Autopilot: when the task was flagged stuck (cleared when the pulse moves). */
   stuckSince?: string;
+  /** Autopilot: per-task kill switch; absent means autopilot may act. */
+  autopilotEnabled?: boolean;
+  /** Autopilot: most recent actions taken on this task (newest first, capped). */
+  autopilotActivity?: readonly AutopilotActivityEvent[];
+}
+
+/** One autopilot action recorded on the run state for the deck's feed. */
+export interface AutopilotActivityEvent {
+  at: string;
+  kind: "merge" | "nudge-ci-failure" | "nudge-review-comments" | "flag-stuck";
+  detail: string;
 }
 
 export interface RunStateDraft {
@@ -142,6 +153,47 @@ function stringArrayField(
   return field;
 }
 
+const ACTIVITY_KIND_SET: Record<AutopilotActivityEvent["kind"], true> = {
+  merge: true,
+  "nudge-ci-failure": true,
+  "nudge-review-comments": true,
+  "flag-stuck": true,
+};
+
+function isActivityKind(value: unknown): value is AutopilotActivityEvent["kind"] {
+  return typeof value === "string" && value in ACTIVITY_KIND_SET;
+}
+
+function parseActivityEvent(raw: unknown): AutopilotActivityEvent | undefined {
+  if (!isPlainObject(raw)) {
+    return undefined;
+  }
+  const { at, kind, detail } = raw;
+  if (typeof at !== "string" || !isActivityKind(kind) || typeof detail !== "string") {
+    return undefined;
+  }
+  return { at, kind, detail };
+}
+
+function activityField(
+  value: Record<string, unknown>,
+  key: string,
+): readonly AutopilotActivityEvent[] | undefined {
+  const field = value[key];
+  if (!Array.isArray(field)) {
+    return undefined;
+  }
+  const events: AutopilotActivityEvent[] = [];
+  for (const raw of field) {
+    const event = parseActivityEvent(raw);
+    if (event === undefined) {
+      return undefined;
+    }
+    events.push(event);
+  }
+  return events;
+}
+
 function isRunLifecycleState(value: unknown): value is RunLifecycleState {
   return (
     value === "running" ||
@@ -205,6 +257,8 @@ interface OptionalRunStateFields {
   reviewNudgedAt: string | undefined;
   nudgedCommentIds: readonly string[] | undefined;
   stuckSince: string | undefined;
+  autopilotEnabled: boolean | undefined;
+  autopilotActivity: readonly AutopilotActivityEvent[] | undefined;
 }
 
 /** Spread-ready subset containing only the optional fields that are present. */
@@ -226,6 +280,10 @@ function presentOptionalFields(fields: OptionalRunStateFields): Partial<RunState
     ...(fields.reviewNudgedAt === undefined ? {} : { reviewNudgedAt: fields.reviewNudgedAt }),
     ...(fields.nudgedCommentIds === undefined ? {} : { nudgedCommentIds: fields.nudgedCommentIds }),
     ...(fields.stuckSince === undefined ? {} : { stuckSince: fields.stuckSince }),
+    ...(fields.autopilotEnabled === undefined ? {} : { autopilotEnabled: fields.autopilotEnabled }),
+    ...(fields.autopilotActivity === undefined
+      ? {}
+      : { autopilotActivity: fields.autopilotActivity }),
   };
 }
 
@@ -259,6 +317,9 @@ function parseRunState(value: unknown): RunState | undefined {
   const reviewNudgedAt = stringField(value, "reviewNudgedAt");
   const nudgedCommentIds = stringArrayField(value, "nudgedCommentIds");
   const stuckSince = stringField(value, "stuckSince");
+  const autopilotEnabled =
+    typeof value["autopilotEnabled"] === "boolean" ? value["autopilotEnabled"] : undefined;
+  const autopilotActivity = activityField(value, "autopilotActivity");
   if (
     task === undefined ||
     repository === undefined ||
@@ -303,6 +364,8 @@ function parseRunState(value: unknown): RunState | undefined {
       reviewNudgedAt,
       nudgedCommentIds,
       stuckSince,
+      autopilotEnabled,
+      autopilotActivity,
     }),
   };
 }
@@ -320,6 +383,8 @@ type ObservedRunStateFields = Pick<
   | "reviewNudgedAt"
   | "nudgedCommentIds"
   | "stuckSince"
+  | "autopilotEnabled"
+  | "autopilotActivity"
 >;
 
 function preservedObservations(existing: RunState | undefined): ObservedRunStateFields {
@@ -335,6 +400,8 @@ function preservedObservations(existing: RunState | undefined): ObservedRunState
     reviewNudgedAt: existing?.reviewNudgedAt,
     nudgedCommentIds: existing?.nudgedCommentIds,
     stuckSince: existing?.stuckSince,
+    autopilotEnabled: existing?.autopilotEnabled,
+    autopilotActivity: existing?.autopilotActivity,
   };
 }
 
@@ -518,10 +585,24 @@ export interface RecordTaskAutopilotInput {
   task: string;
   /** Fields to set; omitted fields are left alone. */
   set?: Partial<
-    Pick<RunState, "ciNudgeAttempts" | "reviewNudgedAt" | "nudgedCommentIds" | "stuckSince">
+    Pick<
+      RunState,
+      | "ciNudgeAttempts"
+      | "reviewNudgedAt"
+      | "nudgedCommentIds"
+      | "stuckSince"
+      | "autopilotEnabled"
+      | "autopilotActivity"
+    >
   >;
   /** Fields to remove. */
-  clear?: readonly ("ciNudgeAttempts" | "reviewNudgedAt" | "nudgedCommentIds" | "stuckSince")[];
+  clear?: readonly (
+    | "ciNudgeAttempts"
+    | "reviewNudgedAt"
+    | "nudgedCommentIds"
+    | "stuckSince"
+    | "autopilotEnabled"
+  )[];
 }
 
 /**
@@ -541,6 +622,8 @@ export function recordTaskAutopilot(input: RecordTaskAutopilotInput): RunState |
       delete state.reviewNudgedAt;
     } else if (key === "nudgedCommentIds") {
       delete state.nudgedCommentIds;
+    } else if (key === "autopilotEnabled") {
+      delete state.autopilotEnabled;
     } else {
       delete state.stuckSince;
     }

@@ -115,12 +115,19 @@ function fakeSource(issues: readonly Issue[]): TaskSource {
 }
 
 describe(joinFleetSnapshot, () => {
-  it("carries an active crew pause through the join", () => {
+  it("carries an active crew pause and the autopilot settings through the join", () => {
     const pause = { pausedAt: "2026-06-13T08:00:00.000Z", reason: "lunch" };
+    const autopilot = {
+      ciFailure: { enabled: true, maxAttempts: 2 },
+      reviewComments: { enabled: false },
+      autoMerge: { enabled: false },
+      stuck: { enabled: true, thresholdMinutes: 10 },
+    };
 
-    const actual = joinFleetSnapshot(joinInput({ pause }));
+    const actual = joinFleetSnapshot(joinInput({ pause, autopilot }));
 
     expect(actual.pause).toStrictEqual(pause);
+    expect(actual.autopilot).toStrictEqual(autopilot);
   });
 
   it("joins a board issue with its run state, worktree, and live workspace", () => {
@@ -476,6 +483,7 @@ describe(collectFleetSnapshot, () => {
     const actual = await collectFleetSnapshot({ config });
 
     expect(actual.pause).toMatchObject({ reason: "lunch" });
+    expect(actual.autopilot).toMatchObject({ stuck: { enabled: true, thresholdMinutes: 10 } });
   });
 
   it("degrades to an unavailable board when source construction fails", async () => {

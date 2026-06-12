@@ -2,9 +2,10 @@
 
 import { useEffect } from "react";
 
-import type { FleetTask } from "@clipboard-health/groundcrew";
+import type { AutopilotConfig, FleetTask } from "@clipboard-health/groundcrew";
 
 import { ActionBar, type ActionOutcome } from "@/components/actionBar";
+import { AutopilotPanel } from "@/components/autopilotPanel";
 import { NudgeBox } from "@/components/nudgeBox";
 import { AgentBadge, Chip, PulseDot } from "@/components/primitives";
 import { TerminalPane } from "@/components/terminalPane";
@@ -55,10 +56,12 @@ function Mono({ children }: { children: React.ReactNode }): React.ReactElement {
 
 export function TaskDrawer({
   task,
+  autopilot,
   onClose,
   onOutcome,
 }: {
   task: FleetTask;
+  autopilot: AutopilotConfig | undefined;
   onClose: () => void;
   onOutcome: (outcome: ActionOutcome) => void;
 }): React.ReactElement {
@@ -152,27 +155,32 @@ export function TaskDrawer({
         )}
 
         {run === undefined ? undefined : (
-          <Section title="Run state">
-            <Row label="state">{run.state}</Row>
-            <Row label="started">
-              <Mono>{run.createdAt}</Mono>
-            </Row>
-            <Row label="updated">
-              <Mono>{run.updatedAt}</Mono>
-            </Row>
-            <Row label="resumes">{run.resumeCount}</Row>
-            {run.reason === undefined ? undefined : <Row label="reason">{run.reason}</Row>}
-            {run.pulseChangedAt === undefined ? undefined : (
-              <Row label="pulse since">
-                <Mono>{run.pulseChangedAt}</Mono>
+          <>
+            <Section title="Autopilot">
+              <AutopilotPanel task={task} autopilot={autopilot} onOutcome={onOutcome} />
+            </Section>
+            <Section title="Run state">
+              <Row label="state">{run.state}</Row>
+              <Row label="started">
+                <Mono>{run.createdAt}</Mono>
               </Row>
-            )}
-            {run.snoozedUntil === undefined ? undefined : (
-              <Row label="snoozed until">
-                <Mono>{run.snoozedUntil}</Mono>
+              <Row label="updated">
+                <Mono>{run.updatedAt}</Mono>
               </Row>
-            )}
-          </Section>
+              <Row label="resumes">{run.resumeCount}</Row>
+              {run.reason === undefined ? undefined : <Row label="reason">{run.reason}</Row>}
+              {run.pulseChangedAt === undefined ? undefined : (
+                <Row label="pulse since">
+                  <Mono>{run.pulseChangedAt}</Mono>
+                </Row>
+              )}
+              {run.snoozedUntil === undefined ? undefined : (
+                <Row label="snoozed until">
+                  <Mono>{run.snoozedUntil}</Mono>
+                </Row>
+              )}
+            </Section>
+          </>
         )}
 
         {task.workspace === "live" ? (

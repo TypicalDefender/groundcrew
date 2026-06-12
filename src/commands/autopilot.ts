@@ -20,12 +20,17 @@ import {
   type PullRequestSummary,
 } from "../lib/pullRequests.ts";
 import { buildCiFailureNudge } from "../lib/ciLogs.ts";
-import { recordTaskAutopilot, type RunState } from "../lib/runState.ts";
+import {
+  type AutopilotActivityEvent,
+  recordTaskAutopilot,
+  type RunState,
+} from "../lib/runState.ts";
 import { formatReviewCommentsNudge, selectUndeliveredComments } from "../lib/reviewNudges.ts";
 import { errorMessage, log } from "../lib/util.ts";
 import { workspaces, type WorkspaceSendResult } from "../lib/workspaces.ts";
 
 const MILLISECONDS_PER_MINUTE = 60_000;
+const MAX_ACTIVITY_EVENTS = 10;
 
 export type FollowUpAction =
   | { kind: "merge"; task: string; prUrl: string; branchName: string; worktreeDir: string }
@@ -152,6 +157,10 @@ function decideForTask(
   liveNames: ReadonlySet<string>,
   now: Date,
 ): FollowUpAction | undefined {
+  // Per-task kill switch (deck toggle / recordTaskAutopilot).
+  if (state.autopilotEnabled === false) {
+    return undefined;
+  }
   const merge = decideMerge(state, autopilot);
   if (merge !== undefined) {
     return merge;
@@ -277,7 +286,22 @@ export function createAutopilot(
 ): Autopilot {
   const { config } = dependencies;
 
-  async function executeMerge(action: Extract<FollowUpAction, { kind: "merge" }>): Promise<void> {
+  function recordActivity(
+    task: string,
+    states: readonly RunState[],
+    event: Omit<AutopilotActivityEvent, "at">,
+    now: Date,
+  ): void {
+    const previous = states.find((state) => state.task === task)?.autopilotActivity ?? [];
+    const trail = [{ at: now.toISOString(), ...event }, ...previous].slice(0, MAX_ACTIVITY_EVENTS);
+    recordTaskAutopilot({ config, task, set: { autopilotActivity: trail } });
+  }
+
+  async function executeMerge(
+    action: Extract<FollowUpAction, { kind: "merge" }>,
+    states: readonly RunState[],
+    now: Date,
+  ): Promise<void> {
     const summaries = await deps.findPullRequests({
       cwd: action.worktreeDir,
       branchName: action.branchName,
@@ -290,9 +314,16 @@ export function createAutopilot(
     const result = await deps.merge({ cwd: action.worktreeDir, pullRequest });
     if (result.outcome === "merged") {
       log(`Autopilot: merged ${action.prUrl} for ${action.task}`);
+      recordActivity(action.task, states, { kind: "merge", detail: `merged ${action.prUrl}` }, now);
       return;
     }
     log(`Autopilot: merge of ${action.prUrl} ${result.outcome}: ${result.reason}`);
+    recordActivity(
+      action.task,
+      states,
+      { kind: "merge", detail: `merge ${result.outcome}: ${result.reason}` },
+      now,
+    );
   }
 
   async function executeNudge(
@@ -310,6 +341,7 @@ export function createAutopilot(
 
   async function executeReviewNudge(
     action: Extract<FollowUpAction, { kind: "nudge-review-comments" }>,
+    states: readonly RunState[],
     now: Date,
     signal?: AbortSignal,
   ): Promise<void> {
@@ -333,12 +365,26 @@ export function createAutopilot(
           nudgedCommentIds: [...action.deliveredCommentIds, ...fresh.map((c) => c.id)],
         },
       });
+      recordActivity(
+        action.task,
+        states,
+        {
+          kind: "nudge-review-comments",
+          detail: `delivered ${fresh.length} review comment(s)`,
+        },
+        now,
+      );
     }
   }
 
-  async function execute(action: FollowUpAction, now: Date, signal?: AbortSignal): Promise<void> {
+  async function execute(
+    action: FollowUpAction,
+    states: readonly RunState[],
+    now: Date,
+    signal?: AbortSignal,
+  ): Promise<void> {
     if (action.kind === "merge") {
-      await executeMerge(action);
+      await executeMerge(action, states, now);
       return;
     }
     if (action.kind === "nudge-ci-failure") {
@@ -349,17 +395,32 @@ export function createAutopilot(
           task: action.task,
           set: { ciNudgeAttempts: action.attempt },
         });
+        recordActivity(
+          action.task,
+          states,
+          {
+            kind: "nudge-ci-failure",
+            detail: `nudged about failing CI (attempt ${action.attempt})`,
+          },
+          now,
+        );
       }
       return;
     }
     if (action.kind === "nudge-review-comments") {
-      await executeReviewNudge(action, now, signal);
+      await executeReviewNudge(action, states, now, signal);
       return;
     }
     log(
       `Autopilot: ${action.task} looks stuck (pulse unchanged for ${action.stuckForMinutes}m); flagging it`,
     );
     recordTaskAutopilot({ config, task: action.task, set: { stuckSince: now.toISOString() } });
+    recordActivity(
+      action.task,
+      states,
+      { kind: "flag-stuck", detail: `pulse unchanged for ${action.stuckForMinutes}m` },
+      now,
+    );
   }
 
   return {
@@ -380,7 +441,7 @@ export function createAutopilot(
       for (const action of actions) {
         try {
           // oxlint-disable-next-line no-await-in-loop -- follow-ups run sequentially on purpose
-          await execute(action, now, signal);
+          await execute(action, runStates, now, signal);
         } catch (error) {
           log(`Autopilot: ${action.kind} for ${action.task} failed: ${errorMessage(error)}`);
         }

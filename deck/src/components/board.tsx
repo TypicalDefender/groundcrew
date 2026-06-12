@@ -6,6 +6,7 @@ import type { FleetTask } from "@clipboard-health/groundcrew";
 
 import type { ActionOutcome } from "@/components/actionBar";
 import { DraftTaskForm } from "@/components/draftTaskForm";
+import { AutopilotFeedSection } from "@/components/autopilotFeedSection";
 import { PauseControl } from "@/components/pauseControl";
 import { TaskCard } from "@/components/taskCard";
 import { TaskDrawer } from "@/components/taskDrawer";
@@ -190,9 +191,12 @@ export function Board(): React.ReactElement {
         </div>
       )}
 
+      <AutopilotFeedSection tasks={snapshot.tasks} />
+
       {drawerTask === undefined ? undefined : (
         <TaskDrawer
           task={drawerTask}
+          autopilot={snapshot.autopilot}
           onClose={() => {
             setOpenTask(undefined);
           }}

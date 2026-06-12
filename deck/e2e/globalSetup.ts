@@ -11,6 +11,7 @@ import path from "node:path";
 import {
   loadConfig,
   recordRunState,
+  recordTaskAutopilot,
   recordTaskPulse,
   recordTaskPullRequest,
 } from "@clipboard-health/groundcrew";
@@ -94,5 +95,19 @@ export default async function globalSetup(): Promise<void> {
     prNumber: 32,
     ci: "failing",
     review: "changes-requested",
+  });
+  recordTaskAutopilot({
+    config,
+    task: "e2e-004",
+    set: {
+      ciNudgeAttempts: 1,
+      autopilotActivity: [
+        {
+          at: "2026-06-12T18:30:00.000Z",
+          kind: "nudge-ci-failure",
+          detail: "nudged about failing CI (attempt 1)",
+        },
+      ],
+    },
   });
 }

@@ -232,6 +232,17 @@ describe(decideFollowUps, () => {
     expect(actions[0]).toMatchObject({ kind: "nudge-ci-failure" });
   });
 
+  it("does nothing for a task whose autopilot switch is off, even merges", () => {
+    const state = runState("team-1", {
+      prUrl: "https://github.com/acme/repo-a/pull/9",
+      ci: "passing",
+      review: "approved",
+      autopilotEnabled: false,
+    });
+
+    expect(decide([state], ALL_ON)).toStrictEqual([]);
+  });
+
   it("falls back to stuck-only defaults when the config omits autopilot", () => {
     const stale = runState("team-1", {
       pulse: "idle",
@@ -374,6 +385,18 @@ describe(createAutopilot, () => {
     await autopilot.runOnce({ runStates: statesWith(FAILING_PR), now: NOW });
     expect(sent).toHaveLength(2);
     expect(readRunState(config, "team-1")?.ciNudgeAttempts).toBe(2);
+    expect(readRunState(config, "team-1")?.autopilotActivity).toStrictEqual([
+      {
+        at: NOW.toISOString(),
+        kind: "nudge-ci-failure",
+        detail: "nudged about failing CI (attempt 2)",
+      },
+      {
+        at: NOW.toISOString(),
+        kind: "nudge-ci-failure",
+        detail: "nudged about failing CI (attempt 1)",
+      },
+    ]);
 
     await autopilot.runOnce({ runStates: statesWith(FAILING_PR), now: NOW });
     expect(sent).toHaveLength(2);
@@ -405,25 +428,39 @@ describe(createAutopilot, () => {
     recordTaskAutopilot({
       config,
       task: "team-1",
-      set: { ciNudgeAttempts: 1, reviewNudgedAt: "x", nudgedCommentIds: ["c1"], stuckSince: "y" },
+      set: {
+        ciNudgeAttempts: 1,
+        reviewNudgedAt: "x",
+        nudgedCommentIds: ["c1"],
+        stuckSince: "y",
+        autopilotEnabled: false,
+      },
     });
     expect(readRunState(config, "team-1")).toMatchObject({
       ciNudgeAttempts: 1,
       reviewNudgedAt: "x",
       nudgedCommentIds: ["c1"],
       stuckSince: "y",
+      autopilotEnabled: false,
     });
 
     recordTaskAutopilot({
       config,
       task: "team-1",
-      clear: ["ciNudgeAttempts", "reviewNudgedAt", "nudgedCommentIds", "stuckSince"],
+      clear: [
+        "ciNudgeAttempts",
+        "reviewNudgedAt",
+        "nudgedCommentIds",
+        "stuckSince",
+        "autopilotEnabled",
+      ],
     });
     const cleared = readRunState(config, "team-1");
     expect(cleared?.ciNudgeAttempts).toBeUndefined();
     expect(cleared?.reviewNudgedAt).toBeUndefined();
     expect(cleared?.nudgedCommentIds).toBeUndefined();
     expect(cleared?.stuckSince).toBeUndefined();
+    expect(cleared?.autopilotEnabled).toBeUndefined();
   });
 
   it("delivers each review comment exactly once across ticks", async () => {
@@ -513,6 +550,29 @@ describe(createAutopilot, () => {
     probeMock.mockClear();
     await autopilot.runOnce({ runStates: statesWith({}), now: NOW });
     expect(probeMock).not.toHaveBeenCalled();
+  });
+
+  it("caps the per-task activity trail at ten events", async () => {
+    seed();
+    recordTaskAutopilot({
+      config,
+      task: "team-1",
+      set: {
+        autopilotActivity: Array.from({ length: 10 }, (_, index) => ({
+          at: `2026-06-13T0${index % 10}:00:00.000Z`,
+          kind: "flag-stuck" as const,
+          detail: `old event ${index}`,
+        })),
+      },
+    });
+    const autopilot = createAutopilot({ config }, deps);
+
+    await autopilot.runOnce({ runStates: statesWith(FAILING_PR), now: NOW });
+
+    const trail = readRunState(config, "team-1")?.autopilotActivity;
+    expect(trail).toHaveLength(10);
+    expect(trail?.[0]?.detail).toBe("nudged about failing CI (attempt 1)");
+    expect(trail?.at(-1)?.detail).toBe("old event 8");
   });
 
   it("logs and continues when a follow-up throws", async () => {

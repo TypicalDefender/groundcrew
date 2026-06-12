@@ -12,7 +12,13 @@ import type * as configModule from "../lib/config.ts";
 import { loadConfigWithSource, type ResolvedConfig } from "../lib/config.ts";
 import { readLastSession, recordLastSession, type LastSessionTask } from "../lib/lastSession.ts";
 import { clearPause, recordPause } from "../lib/pause.ts";
-import { recordRunState, recordTaskPulse, type RunState } from "../lib/runState.ts";
+import {
+  recordRunState,
+  recordTaskAutopilot,
+  recordTaskPullRequest,
+  recordTaskPulse,
+  type RunState,
+} from "../lib/runState.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import { getUsageByAgent } from "../lib/usage.ts";
 import type * as utilModule from "../lib/util.ts";
@@ -70,6 +76,7 @@ const usageMock = vi.mocked(getUsageByAgent);
 const setupMock = vi.mocked(setupWorkspace);
 const resumeMock = vi.mocked(resumeWorkspace);
 const probeMock = vi.mocked(workspaces.probe);
+const sendTextMock = vi.mocked(workspaces.sendText);
 
 function makeConfig(stateRoot: string): ResolvedConfig {
   return {
@@ -241,6 +248,51 @@ describe("orchestrator pause gating", () => {
 
     expect(resumeMock).not.toHaveBeenCalled();
     expect(consoleLog.output()).toContain("Restore: no stopped session snapshot; starting fresh");
+  });
+
+  it("autopilot nudges a failing-CI task exactly once per attempt, then stops", async () => {
+    // Phase exit criteria: one nudge per budgeted attempt across real
+    // one-shot ticks, none while the pulse is active, hard stop at max.
+    config = {
+      ...config,
+      autopilot: {
+        ciFailure: { enabled: true, maxAttempts: 2 },
+        reviewComments: { enabled: false },
+        autoMerge: { enabled: false },
+        stuck: { enabled: false, thresholdMinutes: 10 },
+      },
+    };
+    loadConfigMock.mockResolvedValue({
+      config,
+      source: { kind: "xdg", filepath: "/tmp/crew.config.ts" },
+    });
+    seedRunState(config, "r-8", "running");
+    recordTaskPullRequest({
+      config,
+      task: "r-8",
+      prUrl: "https://github.com/acme/repo-a/pull/8",
+      prNumber: 8,
+      ci: "failing",
+      review: "pending",
+    });
+    probeMock.mockResolvedValue({ kind: "ok", names: new Set(["r-8"]) });
+    sendTextMock.mockResolvedValue({ kind: "sent" });
+
+    await orchestrate({ watch: false, dryRun: false });
+    expect(sendTextMock).toHaveBeenCalledTimes(1);
+
+    await orchestrate({ watch: false, dryRun: false });
+    expect(sendTextMock).toHaveBeenCalledTimes(2);
+
+    // Budget exhausted: the third tick stays silent.
+    await orchestrate({ watch: false, dryRun: false });
+    expect(sendTextMock).toHaveBeenCalledTimes(2);
+
+    // Fresh budget but an active pulse: still silent.
+    recordTaskAutopilot({ config, task: "r-8", clear: ["ciNudgeAttempts"] });
+    recordTaskPulse({ config, task: "r-8", pulse: "active" });
+    await orchestrate({ watch: false, dryRun: false });
+    expect(sendTextMock).toHaveBeenCalledTimes(2);
   });
 
   it("fast-ticks while any task pulse is active, on the real run states", async () => {

@@ -13,7 +13,7 @@
 
 import { createBoard } from "./board.ts";
 import { buildSources, sourcesFromConfig } from "./buildSources.ts";
-import type { ResolvedConfig } from "./config.ts";
+import { type AutopilotConfig, DEFAULT_AUTOPILOT, type ResolvedConfig } from "./config.ts";
 import { type PauseState, readPause } from "./pause.ts";
 import { listRunStates, type RunState } from "./runState.ts";
 import { type CanonicalStatus, type Issue, naturalIdFromCanonical } from "./taskSource.ts";
@@ -85,6 +85,8 @@ export interface FleetSnapshot {
   workspaces: FleetFeedHealth;
   /** Crew-level pause, when one is active. */
   pause?: PauseState;
+  /** Resolved autopilot settings, so consumers can show budgets. */
+  autopilot?: AutopilotConfig;
 }
 
 export type FleetBoardFeed =
@@ -112,6 +114,7 @@ export async function collectFleetSnapshot(
     worktreeEntries: worktrees.list(config),
     probe,
     ...(pause === undefined ? {} : { pause }),
+    autopilot: config.autopilot ?? DEFAULT_AUTOPILOT,
     agentColors: Object.fromEntries(
       Object.entries(config.agents.definitions).map(([name, definition]) => [
         name,
@@ -131,6 +134,8 @@ export interface JoinFleetSnapshotInput {
   agentColors?: Readonly<Record<string, string>>;
   /** Crew-level pause, when one is active. */
   pause?: PauseState;
+  /** Resolved autopilot settings, so consumers can show budgets. */
+  autopilot?: AutopilotConfig;
 }
 
 /**
@@ -190,6 +195,7 @@ export function joinFleetSnapshot(input: JoinFleetSnapshotInput): FleetSnapshot 
     board: board.kind === "ok" ? { kind: "ok" } : { kind: "unavailable", reason: board.reason },
     workspaces: probeHealth(probe),
     ...(input.pause === undefined ? {} : { pause: input.pause }),
+    ...(input.autopilot === undefined ? {} : { autopilot: input.autopilot }),
   };
 }
 
