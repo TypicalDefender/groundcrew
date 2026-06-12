@@ -8,6 +8,7 @@ import {
   readRunState,
   recordRunState,
   recordTaskPulse,
+  recordTaskPullRequest,
   removeRunState,
   type RunLifecycleState,
   runStateDirectory,
@@ -616,5 +617,102 @@ describe("run state store", () => {
       pulse: "ready",
       pulseChangedAt: "2026-06-12T11:00:00.000Z",
     });
+  });
+
+  it("records PR observations and preserves them across lifecycle writes", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "running",
+      },
+    });
+    const before = readRunState(config, "team-1");
+
+    const recorded = recordTaskPullRequest({
+      config,
+      task: "team-1",
+      prUrl: "https://github.com/x/y/pull/12",
+      prNumber: 12,
+      ci: "failing",
+      review: "changes-requested",
+    });
+
+    expect(recorded).toMatchObject({
+      prUrl: "https://github.com/x/y/pull/12",
+      prNumber: 12,
+      ci: "failing",
+      review: "changes-requested",
+    });
+    expect(recorded?.updatedAt).toBe(before?.updatedAt);
+
+    recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "interrupted",
+      },
+    });
+
+    expect(readRunState(config, "team-1")).toMatchObject({
+      state: "interrupted",
+      prUrl: "https://github.com/x/y/pull/12",
+      prNumber: 12,
+      ci: "failing",
+      review: "changes-requested",
+    });
+  });
+
+  it("ignores PR recording for tasks with no run state", () => {
+    expect(
+      recordTaskPullRequest({
+        config,
+        task: "ghost",
+        prUrl: "https://x",
+        prNumber: 1,
+        ci: "passing",
+        review: "approved",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("drops unrecognized stored ci/review/prNumber values instead of rejecting the record", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "running",
+      },
+    });
+    const statePath = runStatePath(config, "team-1");
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- mutating our own freshly-written fixture JSON
+    const raw = JSON.parse(readFileSync(statePath, "utf8")) as Record<string, unknown>;
+    raw["ci"] = "on-fire";
+    raw["review"] = "vetoed";
+    raw["prNumber"] = -3;
+    raw["prUrl"] = "https://github.com/x/y/pull/3";
+    writeFileSync(statePath, JSON.stringify(raw));
+
+    const actual = readRunState(config, "team-1");
+
+    expect(actual?.ci).toBeUndefined();
+    expect(actual?.review).toBeUndefined();
+    expect(actual?.prNumber).toBeUndefined();
+    expect(actual?.prUrl).toBe("https://github.com/x/y/pull/3");
   });
 });

@@ -6,7 +6,7 @@ import type { BoardState, Issue, MarkDoneResult, MarkInReviewResult } from "../l
 import type { WorktreeEntry } from "../lib/worktrees.ts";
 import { makeBoard } from "../testHelpers/boardFixtures.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
-import { createReviewer, type FindPullRequests } from "./reviewer.ts";
+import { createReviewer, type RecordPullRequest, type FindPullRequests } from "./reviewer.ts";
 
 function boardOf(issues: BoardState["issues"]): BoardState {
   return { timestamp: "2025-01-01T00:00:00.000Z", issues, parentSkips: [] };
@@ -492,5 +492,107 @@ describe(createReviewer, () => {
       branchName: "dev-team-1",
       signal,
     });
+  });
+});
+
+describe("pull request observation recording", () => {
+  let consoleLog: ConsoleCapture;
+  let board: Board;
+
+  beforeEach(() => {
+    consoleLog = captureConsoleLog();
+    board = makeBoard({});
+  });
+
+  afterEach(() => {
+    consoleLog.restore();
+    vi.clearAllMocks();
+  });
+
+  async function runReviewerWith(
+    prs: readonly PullRequestSummary[],
+    record: RecordPullRequest,
+    status: "in-progress" | "in-review" = "in-progress",
+  ): Promise<void> {
+    const reviewer = createReviewer({
+      board,
+      findPullRequests: findReturning(prs),
+      recordPullRequest: record,
+    });
+    await reviewer.runOnce({
+      state: boardOf([inProgressIssue("team-1", { status })]),
+      worktreeEntries: [hostEntryFor("team-1")],
+      dryRun: false,
+    });
+  }
+
+  it("persists url, number, ci, and review of the open PR", async () => {
+    const record = vi.fn<RecordPullRequest>();
+
+    await runReviewerWith(
+      [
+        pullRequest({ state: "merged", number: 7, ci: "unknown" }),
+        pullRequest({
+          state: "open",
+          number: 9,
+          url: "https://github.com/x/y/pull/9",
+          ci: "failing",
+          review: "changes-requested",
+          unresolvedComments: 3,
+        }),
+      ],
+      record,
+    );
+
+    expect(record).toHaveBeenCalledTimes(1);
+    const observed = record.mock.calls[0]?.[0];
+    expect(observed?.task).toBe("team-1");
+    expect(observed?.pullRequest).toMatchObject({
+      url: "https://github.com/x/y/pull/9",
+      number: 9,
+      ci: "failing",
+      review: "changes-requested",
+    });
+  });
+
+  it("falls back to the merged PR when no PR is open", async () => {
+    const record = vi.fn<RecordPullRequest>();
+
+    await runReviewerWith([pullRequest({ state: "merged", number: 7 })], record, "in-review");
+
+    expect(record).toHaveBeenCalledTimes(1);
+    const observed = record.mock.calls[0]?.[0];
+    expect(observed?.task).toBe("team-1");
+    expect(observed?.pullRequest).toMatchObject({ number: 7, state: "merged" });
+  });
+
+  it("records nothing when the lookup found no PRs", async () => {
+    const record = vi.fn<RecordPullRequest>();
+
+    await runReviewerWith([], record);
+
+    expect(record).not.toHaveBeenCalled();
+  });
+
+  it("keeps reviewing when the record callback throws", async () => {
+    const record = vi.fn<RecordPullRequest>(() => {
+      throw new Error("disk full");
+    });
+
+    await runReviewerWith([pullRequest({ state: "open" })], record);
+
+    expect(consoleLog.output()).toContain("Advanced team-1 to in-review");
+  });
+
+  it("still records observations for tasks already in review (no transition)", async () => {
+    const record = vi.fn<RecordPullRequest>();
+
+    await runReviewerWith(
+      [pullRequest({ state: "open", ci: "passing", review: "approved" })],
+      record,
+      "in-review",
+    );
+
+    expect(record).toHaveBeenCalledTimes(1);
   });
 });

@@ -3,6 +3,8 @@ import {
   clearPullRequestLookupCache,
   fetchReviewComments,
   findPullRequestsForBranch,
+  isMergeablePullRequest,
+  type PullRequestSummary,
   summarizeCheckRollup,
 } from "./pullRequests.ts";
 
@@ -656,5 +658,30 @@ describe(fetchReviewComments, () => {
     await fetchReviewComments({ cwd: "/w", prUrl: PR_URL, signal });
 
     expect(runCommandMock).toHaveBeenCalledWith("gh", expect.any(Array), { cwd: "/w", signal });
+  });
+});
+
+function summary(overrides: Partial<PullRequestSummary>): PullRequestSummary {
+  return {
+    url: "https://github.com/x/y/pull/1",
+    number: 1,
+    state: "open",
+    title: "t",
+    headRefOid: "a",
+    ci: "passing",
+    review: "approved",
+    unresolvedComments: 0,
+    ...overrides,
+  };
+}
+
+describe(isMergeablePullRequest, () => {
+  it("requires open + approved + passing, all three", () => {
+    expect(isMergeablePullRequest(summary({}))).toBe(true);
+    expect(isMergeablePullRequest(summary({ state: "merged" }))).toBe(false);
+    expect(isMergeablePullRequest(summary({ review: "pending" }))).toBe(false);
+    expect(isMergeablePullRequest(summary({ ci: "failing" }))).toBe(false);
+    // unknown CI is a missing signal, never treated as passing
+    expect(isMergeablePullRequest(summary({ ci: "unknown" }))).toBe(false);
   });
 });
