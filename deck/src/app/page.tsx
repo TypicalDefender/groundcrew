@@ -1,3 +1,4 @@
+import { FleetStatus } from "@/app/fleetStatus";
 import { pulseDot } from "@/lib/theme";
 
 const PULSE_LEGEND = ["active", "ready", "idle", "awaiting-input", "blocked", "gone"] as const;
@@ -26,6 +27,7 @@ export default function Home(): React.ReactElement {
           </li>
         ))}
       </ul>
+      <FleetStatus />
     </section>
   );
 }

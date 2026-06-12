@@ -11,7 +11,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 
-import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { loadConfigWithSource, type ResolvedConfig } from "../lib/config.ts";
 
 export interface DeckOptions {
   /** Overrides `deck.port` from config. */
@@ -26,26 +26,36 @@ export interface DeckStep {
   command: string;
   args: readonly string[];
   cwd: string;
+  /** Extra environment for the child; the deck server needs the config path. */
+  env?: Readonly<Record<string, string>>;
 }
 
 export interface DeckCommandPlanInput {
   config: ResolvedConfig;
   options: DeckOptions;
   deckDir: string;
+  /** Resolved crew config file; exported so the deck's API routes load the same config. */
+  configPath?: string;
 }
 
 /** The processes `crew deck` runs, in order. The last one serves until killed. */
 export function deckCommandPlan(input: DeckCommandPlanInput): DeckStep[] {
-  const { config, options, deckDir } = input;
+  const { config, options, deckDir, configPath } = input;
   const port = String(options.port ?? config.deck.port);
+  // The server runs with cwd=deck/, but sources may resolve relative paths
+  // (e.g. a todo.txt) against the operator's directory — export both.
+  const env =
+    configPath === undefined
+      ? {}
+      : { env: { GROUNDCREW_CONFIG: configPath, GROUNDCREW_PROJECT_CWD: process.cwd() } };
   if (options.dev === true) {
-    return [{ command: "npx", args: ["next", "dev", "--port", port], cwd: deckDir }];
+    return [{ command: "npx", args: ["next", "dev", "--port", port], cwd: deckDir, ...env }];
   }
   const steps: DeckStep[] = [];
   if (options.skipBuild !== true) {
-    steps.push({ command: "npx", args: ["next", "build"], cwd: deckDir });
+    steps.push({ command: "npx", args: ["next", "build"], cwd: deckDir, ...env });
   }
-  steps.push({ command: "npx", args: ["next", "start", "--port", port], cwd: deckDir });
+  steps.push({ command: "npx", args: ["next", "start", "--port", port], cwd: deckDir, ...env });
   return steps;
 }
 
@@ -82,6 +92,7 @@ export interface DeckRunInput {
   config: ResolvedConfig;
   options: DeckOptions;
   deckDir?: string;
+  configPath?: string;
   runStep?: RunDeckStep;
 }
 
@@ -95,7 +106,13 @@ export async function deck(input: DeckRunInput): Promise<void> {
   }
   /* v8 ignore next @preserve -- the default runner spawns real servers; tests always inject */
   const runStep = input.runStep ?? runDeckStepInherited;
-  for (const step of deckCommandPlan({ config, options, deckDir })) {
+  const { configPath } = input;
+  for (const step of deckCommandPlan({
+    config,
+    options,
+    deckDir,
+    ...(configPath === undefined ? {} : { configPath }),
+  })) {
     // oxlint-disable-next-line no-await-in-loop -- build must finish before the server starts.
     const exitCode = await runStep(step);
     if (exitCode !== 0) {
@@ -106,8 +123,12 @@ export async function deck(input: DeckRunInput): Promise<void> {
 
 export async function deckCli(argv: string[], runDeck: typeof deck = deck): Promise<void> {
   const options = parseDeckArguments(argv);
-  const config = await loadConfig();
-  await runDeck({ config, options });
+  const loaded = await loadConfigWithSource();
+  await runDeck({
+    config: loaded.config,
+    options,
+    configPath: loaded.source.filepath,
+  });
 }
 
 /** `<package root>/deck`, resolved relative to this module's compiled home. */
@@ -118,7 +139,12 @@ function defaultDeckDirectory(): string {
 /** Default runner: stream the step's output straight to the operator's terminal. */
 export async function runDeckStepInherited(step: DeckStep): Promise<number> {
   return await new Promise<number>((resolve, reject) => {
-    const child = spawn(step.command, [...step.args], { cwd: step.cwd, stdio: "inherit" });
+    const child = spawn(step.command, [...step.args], {
+      cwd: step.cwd,
+      stdio: "inherit",
+      // oxlint-disable-next-line node/no-process-env -- the child must inherit the full environment plus the config path
+      env: { ...process.env, ...step.env },
+    });
     child.on("error", reject);
     child.on("close", (code) => {
       /* v8 ignore next @preserve -- code is null only when the child died from a signal */

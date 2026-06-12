@@ -165,7 +165,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
     local: { runner: "auto", ...overrides.local },
-    deck: { port: 4400, ...overrides.deck },
+    deck: { port: 4400, pollIntervalMilliseconds: 5000, ...overrides.deck },
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
   };
 }

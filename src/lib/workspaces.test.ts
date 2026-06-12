@@ -97,7 +97,7 @@ function makeConfig(workspaceKind: WorkspaceKindSetting = "auto"): ResolvedConfi
     prompts: { initial: "x" },
     workspaceKind,
     local: { runner: "auto" },
-    deck: { port: 4400 },
+    deck: { port: 4400, pollIntervalMilliseconds: 5000 },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
