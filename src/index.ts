@@ -74,6 +74,13 @@ export {
   type AgentResolution,
   type RepositoryResolution,
 } from "./lib/adapters/linear/parsing.ts";
+export {
+  clearPullRequestLookupCache,
+  findPullRequestsForBranch,
+  summarizeCheckRollup,
+  type CiStatus,
+  type PullRequestSummary,
+} from "./lib/pullRequests.ts";
 export { getUsageByAgent, type UsageByAgent } from "./lib/usage.ts";
 export { type Board, createBoard } from "./lib/board.ts";
 export { buildSources, buildSourcesWith } from "./lib/buildSources.ts";

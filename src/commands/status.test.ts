@@ -598,6 +598,7 @@ describe(status, () => {
         state: "open",
         title: "Wire up auth",
         headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ci: "unknown",
       },
     ]);
 
@@ -792,6 +793,7 @@ describe(status, () => {
         state: "open",
         title: "Wire up auth",
         headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ci: "unknown",
       },
     ]);
 
@@ -815,6 +817,7 @@ describe(status, () => {
         state: "open",
         title: "a",
         headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ci: "unknown",
       },
       {
         url: "https://x/pull/2",
@@ -822,6 +825,7 @@ describe(status, () => {
         state: "merged",
         title: "b",
         headRefOid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        ci: "unknown",
       },
     ]);
 
@@ -852,6 +856,7 @@ describe(status, () => {
         state: "open",
         title: "Something",
         headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ci: "unknown",
       },
     ]);
 

@@ -1338,6 +1338,7 @@ JSON
           state: "open",
           title: "PR",
           headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          ci: "unknown",
         },
       ]);
       const client = makeClient({ pages: [[]] });

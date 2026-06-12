@@ -1,5 +1,9 @@
 import type { RunCommandOptions } from "./commandRunner.ts";
-import { findPullRequestsForBranch } from "./pullRequests.ts";
+import {
+  clearPullRequestLookupCache,
+  findPullRequestsForBranch,
+  summarizeCheckRollup,
+} from "./pullRequests.ts";
 
 type RunCommandAsyncMock = (
   command: string,
@@ -62,7 +66,9 @@ function mockFailedGhLookup(): void {
 
 describe(findPullRequestsForBranch, () => {
   afterEach(() => {
+    clearPullRequestLookupCache();
     vi.resetAllMocks();
+    vi.useRealTimers();
   });
 
   it("parses gh's JSON output into typed PR summaries", async () => {
@@ -80,6 +86,7 @@ describe(findPullRequestsForBranch, () => {
         state: "open",
         title: "Wire up auth",
         headRefOid: WORKTREE_HEAD_OID,
+        ci: "unknown",
       },
     ]);
   });
@@ -94,7 +101,13 @@ describe(findPullRequestsForBranch, () => {
 
     expect(runCommandMock).toHaveBeenCalledWith(
       "gh",
-      expect.arrayContaining(["pr", "list", "--head", "feature/auth"]),
+      expect.arrayContaining([
+        "pr",
+        "list",
+        "--head",
+        "feature/auth",
+        "url,number,state,title,headRefOid,statusCheckRollup",
+      ]),
       { cwd: "/work/widgets-team-1" },
     );
     expect(runCommandMock).toHaveBeenCalledWith("gh", expect.not.arrayContaining(["--repo"]), {
@@ -217,5 +230,158 @@ describe(findPullRequestsForBranch, () => {
     });
 
     expect(prs[0]?.state).toBe("draft");
+  });
+  it("derives the ci verdict from the statusCheckRollup in the same lookup", async () => {
+    mockSuccessfulLookup(
+      JSON.stringify([
+        {
+          ...rawPullRequest(),
+          statusCheckRollup: [
+            { name: "build", status: "COMPLETED", conclusion: "SUCCESS" },
+            { name: "test", status: "COMPLETED", conclusion: "SUCCESS" },
+          ],
+        },
+      ]),
+    );
+
+    const prs = await findPullRequestsForBranch({
+      cwd: "/work/widgets-team-1",
+      branchName: "x",
+    });
+
+    expect(prs[0]?.ci).toBe("passing");
+  });
+
+  it("reports failing when any check failed, even with passing and pending checks", async () => {
+    mockSuccessfulLookup(
+      JSON.stringify([
+        {
+          ...rawPullRequest(),
+          statusCheckRollup: [
+            { name: "build", status: "COMPLETED", conclusion: "SUCCESS" },
+            { name: "lint", status: "IN_PROGRESS", conclusion: "" },
+            { name: "test", status: "COMPLETED", conclusion: "FAILURE" },
+          ],
+        },
+      ]),
+    );
+
+    const prs = await findPullRequestsForBranch({
+      cwd: "/work/widgets-team-1",
+      branchName: "x",
+    });
+
+    expect(prs[0]?.ci).toBe("failing");
+  });
+
+  it("reports pending while any check is still running or queued", async () => {
+    mockSuccessfulLookup(
+      JSON.stringify([
+        {
+          ...rawPullRequest(),
+          statusCheckRollup: [
+            { name: "build", status: "COMPLETED", conclusion: "SUCCESS" },
+            { name: "test", status: "QUEUED", conclusion: "" },
+          ],
+        },
+      ]),
+    );
+
+    const prs = await findPullRequestsForBranch({
+      cwd: "/work/widgets-team-1",
+      branchName: "x",
+    });
+
+    expect(prs[0]?.ci).toBe("pending");
+  });
+
+  it("reports unknown when the PR has no checks or only skipped ones", async () => {
+    mockSuccessfulLookup(
+      JSON.stringify([
+        { ...rawPullRequest({ number: 1, url: "https://x/pull/1" }), statusCheckRollup: [] },
+        {
+          ...rawPullRequest({ number: 2, url: "https://x/pull/2" }),
+          statusCheckRollup: [
+            { name: "optional", status: "COMPLETED", conclusion: "SKIPPED" },
+            { name: "advisory", status: "COMPLETED", conclusion: "NEUTRAL" },
+          ],
+        },
+        rawPullRequest({ number: 3, url: "https://x/pull/3" }),
+      ]),
+    );
+
+    const prs = await findPullRequestsForBranch({
+      cwd: "/work/widgets-team-1",
+      branchName: "x",
+    });
+
+    expect(prs.map((pr) => pr.ci)).toStrictEqual(["unknown", "unknown", "unknown"]);
+  });
+
+  it("classifies legacy commit statuses that only carry a state field", async () => {
+    mockSuccessfulLookup(
+      JSON.stringify([
+        {
+          ...rawPullRequest(),
+          statusCheckRollup: [
+            null,
+            "garbage",
+            { name: "entry without result fields" },
+            { context: "ci/legacy", state: "ERROR" },
+          ],
+        },
+      ]),
+    );
+
+    const prs = await findPullRequestsForBranch({
+      cwd: "/work/widgets-team-1",
+      branchName: "x",
+    });
+
+    expect(prs[0]?.ci).toBe("failing");
+  });
+
+  it("memoizes signal-less lookups so one tick issues a single gh call per branch", async () => {
+    vi.useFakeTimers();
+    mockSuccessfulLookup(JSON.stringify([rawPullRequest()]));
+
+    const first = await findPullRequestsForBranch({ cwd: "/w", branchName: "x" });
+    const second = await findPullRequestsForBranch({ cwd: "/w", branchName: "x" });
+    const otherBranch = await findPullRequestsForBranch({ cwd: "/w", branchName: "y" });
+
+    expect(first).toStrictEqual(second);
+    expect(otherBranch).toStrictEqual(first);
+    // 2 commands per lookup (gh + git); two distinct lookups = 4 calls.
+    expect(runCommandMock).toHaveBeenCalledTimes(4);
+
+    vi.advanceTimersByTime(6000);
+    await findPullRequestsForBranch({ cwd: "/w", branchName: "x" });
+    expect(runCommandMock).toHaveBeenCalledTimes(6);
+  });
+
+  it("bypasses the cache when an AbortSignal is provided", async () => {
+    mockSuccessfulLookup(JSON.stringify([rawPullRequest()]));
+    const { signal } = new AbortController();
+
+    await findPullRequestsForBranch({ cwd: "/w", branchName: "x", signal });
+    await findPullRequestsForBranch({ cwd: "/w", branchName: "x", signal });
+
+    expect(runCommandMock).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe(summarizeCheckRollup, () => {
+  it("returns unknown for an empty rollup", () => {
+    expect(summarizeCheckRollup([])).toBe("unknown");
+  });
+
+  it("ranks failing over pending over passing", () => {
+    const passing = { conclusion: "SUCCESS" };
+    const pending = { status: "IN_PROGRESS" };
+    const failing = { conclusion: "TIMED_OUT" };
+
+    expect(summarizeCheckRollup([passing])).toBe("passing");
+    expect(summarizeCheckRollup([passing, pending])).toBe("pending");
+    expect(summarizeCheckRollup([passing, pending, failing])).toBe("failing");
   });
 });
