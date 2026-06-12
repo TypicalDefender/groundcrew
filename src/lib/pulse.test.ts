@@ -519,4 +519,19 @@ describe(readPulse, () => {
 
     await expect(pulse()).resolves.toMatchObject({ state: "active", source: "pane" });
   });
+
+  it("uses a caller-provided probe without re-probing", async () => {
+    probeMock.mockResolvedValue(okProbe(["team-1"]));
+
+    const actual = await readPulse({
+      config,
+      task: "team-1",
+      probe: okProbe([]),
+      homeDirectory,
+      now: NOW,
+    });
+
+    expect(actual).toMatchObject({ state: "gone" });
+    expect(probeMock).not.toHaveBeenCalled();
+  });
 });

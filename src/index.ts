@@ -47,6 +47,8 @@ export {
   listRunStates,
   readRunState,
   recordRunState,
+  recordTaskPulse,
+  type RecordTaskPulseInput,
   removeRunState,
   runStateDirectory,
   runStatePath,

@@ -7,6 +7,7 @@ import {
   listRunStates,
   readRunState,
   recordRunState,
+  recordTaskPulse,
   removeRunState,
   type RunLifecycleState,
   runStateDirectory,
@@ -466,5 +467,154 @@ describe("run state store", () => {
     const actual = listRunStates(config);
 
     expect(actual.map((state) => state.task)).toStrictEqual(["team-1"]);
+  });
+
+  it("records a pulse with its transition timestamp and preserves it across lifecycle writes", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "running",
+      },
+    });
+    const before = readRunState(config, "team-1");
+
+    const pulsed = recordTaskPulse({
+      config,
+      task: "team-1",
+      pulse: "active",
+      observedAt: "2026-06-12T10:00:00.000Z",
+    });
+
+    expect(pulsed).toMatchObject({
+      pulse: "active",
+      pulseChangedAt: "2026-06-12T10:00:00.000Z",
+    });
+    // Pulse observations must not masquerade as lifecycle transitions.
+    expect(pulsed?.updatedAt).toBe(before?.updatedAt);
+
+    // Same pulse later: the transition timestamp stays put.
+    const samePulse = recordTaskPulse({
+      config,
+      task: "team-1",
+      pulse: "active",
+      observedAt: "2026-06-12T10:05:00.000Z",
+    });
+    expect(samePulse?.pulseChangedAt).toBe("2026-06-12T10:00:00.000Z");
+
+    // A different pulse moves it.
+    const changed = recordTaskPulse({
+      config,
+      task: "team-1",
+      pulse: "idle",
+      observedAt: "2026-06-12T10:10:00.000Z",
+    });
+    expect(changed?.pulseChangedAt).toBe("2026-06-12T10:10:00.000Z");
+
+    // Lifecycle transitions keep the recorded pulse.
+    recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "interrupted",
+      },
+    });
+    expect(readRunState(config, "team-1")).toMatchObject({
+      state: "interrupted",
+      pulse: "idle",
+      pulseChangedAt: "2026-06-12T10:10:00.000Z",
+    });
+  });
+
+  it("defaults the pulse transition timestamp to now", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "running",
+      },
+    });
+
+    const pulsed = recordTaskPulse({ config, task: "team-1", pulse: "ready" });
+
+    expect(pulsed).toMatchObject({ pulse: "ready" });
+    expect(pulsed?.pulseChangedAt).toBeTypeOf("string");
+  });
+
+  it("ignores pulse recording for tasks with no run state", () => {
+    expect(recordTaskPulse({ config, task: "ghost", pulse: "active" })).toBeUndefined();
+  });
+
+  it("drops an unrecognized stored pulse value instead of rejecting the record", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "running",
+      },
+    });
+    const statePath = runStatePath(config, "team-1");
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- mutating our own freshly-written fixture JSON
+    const raw = JSON.parse(readFileSync(statePath, "utf8")) as Record<string, unknown>;
+    raw["pulse"] = "vibrating";
+    raw["pulseChangedAt"] = "2026-06-12T10:00:00.000Z";
+    writeFileSync(statePath, JSON.stringify(raw));
+
+    const actual = readRunState(config, "team-1");
+
+    expect(actual?.pulse).toBeUndefined();
+    expect(actual?.pulseChangedAt).toBe("2026-06-12T10:00:00.000Z");
+  });
+
+  it("stamps a transition time when a stored pulse lacks one", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "running",
+      },
+    });
+    const statePath = runStatePath(config, "team-1");
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- mutating our own freshly-written fixture JSON
+    const raw = JSON.parse(readFileSync(statePath, "utf8")) as Record<string, unknown>;
+    raw["pulse"] = "ready";
+    writeFileSync(statePath, JSON.stringify(raw));
+
+    const pulsed = recordTaskPulse({
+      config,
+      task: "team-1",
+      pulse: "ready",
+      observedAt: "2026-06-12T11:00:00.000Z",
+    });
+
+    expect(pulsed).toMatchObject({
+      pulse: "ready",
+      pulseChangedAt: "2026-06-12T11:00:00.000Z",
+    });
   });
 });

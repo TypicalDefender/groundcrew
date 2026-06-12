@@ -36,7 +36,7 @@ import path from "node:path";
 import type { ResolvedConfig } from "./config.ts";
 import { readRunState, type RunState, runStateDirectory } from "./runState.ts";
 import { debug, errorMessage } from "./util.ts";
-import { workspaces } from "./workspaces.ts";
+import { type WorkspaceProbe, workspaces } from "./workspaces.ts";
 import { resolveLaunchDir } from "./worktrees.ts";
 
 export type PulseState = "active" | "ready" | "idle" | "awaiting-input" | "blocked" | "gone";
@@ -65,6 +65,8 @@ export interface ReadPulseInput {
   task: string;
   /** Pass when already loaded (e.g. by the fleet snapshot) to skip a re-read. */
   runState?: RunState;
+  /** Pass a fresh probe to avoid one workspace-list call per task. */
+  probe?: WorkspaceProbe;
   signal?: AbortSignal;
   /** Test seam: where agent session logs live. Defaults to the real home dir. */
   homeDirectory?: string;
@@ -77,14 +79,10 @@ export async function readPulse(input: ReadPulseInput): Promise<Pulse> {
   const now = input.now ?? Date.now();
   const homeDirectory = input.homeDirectory ?? homedir();
 
-  const probe = await workspaces.probe(config, signal);
-  if (probe.kind === "ok") {
-    if (!probe.names.has(task)) {
-      return { state: "gone", source: "workspace", detail: "no workspace session" };
-    }
-    if (probe.exitedNames?.has(task) === true) {
-      return { state: "gone", source: "workspace", detail: "workspace session exited" };
-    }
+  const probe = input.probe ?? (await workspaces.probe(config, signal));
+  const goneVerdict = classifyGone(probe, task);
+  if (goneVerdict !== undefined) {
+    return goneVerdict;
   }
 
   const paneText = await workspaces.capturePane(config, task, signal);
@@ -106,6 +104,24 @@ export async function readPulse(input: ReadPulseInput): Promise<Pulse> {
     return decayFromPaneMemo({ config, task, paneText, now });
   }
   return { state: "idle", source: "pane", detail: "no activity signal available" };
+}
+
+/**
+ * `gone` verdict from the workspace probe, or undefined when the workspace
+ * is live or the probe couldn't answer (an unavailable probe must never be
+ * read as "no workspace").
+ */
+function classifyGone(probe: WorkspaceProbe, task: string): Pulse | undefined {
+  if (probe.kind === "unavailable") {
+    return undefined;
+  }
+  if (!probe.names.has(task)) {
+    return { state: "gone", source: "workspace", detail: "no workspace session" };
+  }
+  if (probe.exitedNames?.has(task) === true) {
+    return { state: "gone", source: "workspace", detail: "workspace session exited" };
+  }
+  return undefined;
 }
 
 /** Age-based decay shared by the native and pane probes. */

@@ -2,6 +2,9 @@ import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync
 import path from "node:path";
 
 import type { ResolvedConfig } from "./config.ts";
+// Type-only: erased at compile time, so no runtime cycle with pulse.ts
+// (which imports this module for run-state reads).
+import type { PulseState } from "./pulse.ts";
 import { isPlainTaskId, normalizePlainTaskId } from "./taskId.ts";
 
 export type RunLifecycleState = "running" | "interrupted" | "resumed" | "failed-to-launch";
@@ -37,6 +40,13 @@ export interface RunState {
    * resumed workers keep the same completion target as the original launch.
    */
   completionTaskId?: string;
+  /**
+   * Last observed pulse (activity state). Written by `recordTaskPulse`
+   * whenever a consumer reads the pulse; lifecycle transitions preserve it.
+   */
+  pulse?: PulseState;
+  /** When the pulse last changed value (not when it was last observed). */
+  pulseChangedAt?: string;
 }
 
 export interface RunStateDraft {
@@ -104,6 +114,44 @@ function isRunLifecycleState(value: unknown): value is RunLifecycleState {
   );
 }
 
+// Record<PulseState, true> so adding a state to the union without updating
+// this map is a compile error in both directions.
+const PULSE_STATE_SET: Record<PulseState, true> = {
+  active: true,
+  ready: true,
+  idle: true,
+  "awaiting-input": true,
+  blocked: true,
+  gone: true,
+};
+
+function isPulseState(value: unknown): value is PulseState {
+  return typeof value === "string" && value in PULSE_STATE_SET;
+}
+
+interface OptionalRunStateFields {
+  reason: string | undefined;
+  detail: string | undefined;
+  title: string | undefined;
+  url: string | undefined;
+  completionTaskId: string | undefined;
+  pulse: PulseState | undefined;
+  pulseChangedAt: string | undefined;
+}
+
+/** Spread-ready subset containing only the optional fields that are present. */
+function presentOptionalFields(fields: OptionalRunStateFields): Partial<RunState> {
+  return {
+    ...(fields.reason === undefined ? {} : { reason: fields.reason }),
+    ...(fields.detail === undefined ? {} : { detail: fields.detail }),
+    ...(fields.title === undefined ? {} : { title: fields.title }),
+    ...(fields.url === undefined ? {} : { url: fields.url }),
+    ...(fields.completionTaskId === undefined ? {} : { completionTaskId: fields.completionTaskId }),
+    ...(fields.pulse === undefined ? {} : { pulse: fields.pulse }),
+    ...(fields.pulseChangedAt === undefined ? {} : { pulseChangedAt: fields.pulseChangedAt }),
+  };
+}
+
 function parseRunState(value: unknown): RunState | undefined {
   if (!isPlainObject(value)) {
     return undefined;
@@ -122,6 +170,9 @@ function parseRunState(value: unknown): RunState | undefined {
   const title = stringField(value, "title");
   const url = stringField(value, "url");
   const completionTaskId = stringField(value, "completionTaskId");
+  // An unknown pulse value degrades to "no recorded pulse", not a corrupt record.
+  const pulse = isPulseState(value["pulse"]) ? value["pulse"] : undefined;
+  const pulseChangedAt = stringField(value, "pulseChangedAt");
   if (
     task === undefined ||
     repository === undefined ||
@@ -149,11 +200,15 @@ function parseRunState(value: unknown): RunState | undefined {
     createdAt,
     updatedAt,
     resumeCount,
-    ...(reason === undefined ? {} : { reason }),
-    ...(detail === undefined ? {} : { detail }),
-    ...(title === undefined ? {} : { title }),
-    ...(url === undefined ? {} : { url }),
-    ...(completionTaskId === undefined ? {} : { completionTaskId }),
+    ...presentOptionalFields({
+      reason,
+      detail,
+      title,
+      url,
+      completionTaskId,
+      pulse,
+      pulseChangedAt,
+    }),
   };
 }
 
@@ -218,6 +273,10 @@ export function recordRunState(input: RecordRunStateInput): RunState {
   const title = input.state.title ?? existing?.title;
   const url = input.state.url ?? existing?.url;
   const completionTaskId = input.state.completionTaskId ?? existing?.completionTaskId;
+  // Pulse fields are only ever written by recordTaskPulse; lifecycle
+  // transitions must not erase the last observed activity.
+  const pulse = existing?.pulse;
+  const pulseChangedAt = existing?.pulseChangedAt;
   const state: RunState = {
     task: taskKey(input.state.task),
     repository: input.state.repository,
@@ -229,12 +288,44 @@ export function recordRunState(input: RecordRunStateInput): RunState {
     createdAt: existing?.createdAt ?? timestamp,
     updatedAt: timestamp,
     resumeCount: input.state.resumeCount ?? existing?.resumeCount ?? 0,
-    ...(input.state.reason === undefined ? {} : { reason: input.state.reason }),
-    ...(input.state.detail === undefined ? {} : { detail: input.state.detail }),
-    ...(title === undefined ? {} : { title }),
-    ...(url === undefined ? {} : { url }),
-    ...(completionTaskId === undefined ? {} : { completionTaskId }),
+    ...presentOptionalFields({
+      reason: input.state.reason,
+      detail: input.state.detail,
+      title,
+      url,
+      completionTaskId,
+      pulse,
+      pulseChangedAt,
+    }),
   };
+  writeState(input.config, state);
+  return state;
+}
+
+export interface RecordTaskPulseInput {
+  config: ResolvedConfig;
+  task: string;
+  pulse: PulseState;
+  /** Clock for the transition timestamp; defaults to now. */
+  observedAt?: string;
+}
+
+/**
+ * Persist the last observed pulse on the task's run state. `pulseChangedAt`
+ * only moves when the pulse value actually changes, so it records the
+ * transition time, not the observation time. Deliberately does NOT bump
+ * `updatedAt` — that field tracks lifecycle transitions, and pulse writes
+ * happen on every status read. No-op when the task has no run state.
+ */
+export function recordTaskPulse(input: RecordTaskPulseInput): RunState | undefined {
+  const existing = readRunState(input.config, input.task);
+  if (existing === undefined) {
+    return undefined;
+  }
+  const observedAt = input.observedAt ?? nowIso();
+  const pulseChangedAt =
+    existing.pulse === input.pulse ? (existing.pulseChangedAt ?? observedAt) : observedAt;
+  const state: RunState = { ...existing, pulse: input.pulse, pulseChangedAt };
   writeState(input.config, state);
   return state;
 }
