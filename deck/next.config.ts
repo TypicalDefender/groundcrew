@@ -10,7 +10,7 @@ const nextConfig: NextConfig = {
   // serverExternalPackages alone doesn't survive the file:.. workspace
   // symlink, so the webpack external is forced with import semantics (the
   // package is ESM).
-  serverExternalPackages: ["@clipboard-health/groundcrew"],
+  serverExternalPackages: ["@clipboard-health/groundcrew", "node-pty", "ws"],
   webpack: (config: { externals: unknown[] }, context: { isServer: boolean }) => {
     if (context.isServer) {
       config.externals.push({
