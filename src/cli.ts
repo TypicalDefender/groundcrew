@@ -77,6 +77,7 @@ async function setupCli(argv: string[]): Promise<void> {
 async function runCli(argv: string[]): Promise<void> {
   let watch = false;
   let dryRun = false;
+  let restore = false;
   let task: string | undefined;
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -87,6 +88,10 @@ async function runCli(argv: string[]): Promise<void> {
     }
     if (argument === "--dry-run") {
       dryRun = true;
+      continue;
+    }
+    if (argument === "--restore") {
+      restore = true;
       continue;
     }
     if (argument === "--task") {
@@ -100,9 +105,12 @@ async function runCli(argv: string[]): Promise<void> {
   if (task !== undefined && watch) {
     throw new Error("crew run: --watch and --task are mutually exclusive");
   }
+  if (restore && !watch) {
+    throw new Error("crew run: --restore requires --watch");
+  }
 
   if (task === undefined) {
-    await orchestrate({ watch, dryRun });
+    await orchestrate({ watch, dryRun, restore });
     return;
   }
   warnDeprecated({ oldForm: "run --task", newForm: "start" });
@@ -166,7 +174,7 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
   },
   run: {
     summary: "Run the orchestrator: poll sources and start eligible tasks (one-shot by default)",
-    usage: "[--watch] [--dry-run]",
+    usage: "[--watch] [--restore] [--dry-run]",
     invoke: runCli,
   },
   start: {

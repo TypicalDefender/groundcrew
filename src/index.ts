@@ -31,6 +31,18 @@ export {
   type KeepAwakeHandle,
   type KeepAwakeProcess,
 } from "./lib/keepAwake.ts";
+export {
+  clearLastSession,
+  lastSessionPath,
+  readLastSession,
+  recordLastSession,
+  runningSessionTasks,
+  selectRestoreTasks,
+  type LastSession,
+  type LastSessionTask,
+  type RestoreSelection,
+  type RestoreSelectionInput,
+} from "./lib/lastSession.ts";
 export { parseDurationMilliseconds } from "./commands/pause.ts";
 export { parseSnoozeUntil } from "./commands/snooze.ts";
 export { workspaces, type WorkspaceSendResult } from "./lib/workspaces.ts";

@@ -202,33 +202,33 @@ describe(run, () => {
   it("dispatches `run` (no flags) to a one-shot orchestrator tick", async () => {
     await run(["run"]);
 
-    expect(orchestrateMock).toHaveBeenCalledWith({ watch: false, dryRun: false });
+    expect(orchestrateMock).toHaveBeenCalledWith({ watch: false, dryRun: false, restore: false });
     expect(setupMock).not.toHaveBeenCalled();
   });
 
   it("dispatches `run --watch` to the orchestrator with watch=true", async () => {
     await run(["run", "--watch"]);
 
-    expect(orchestrateMock).toHaveBeenCalledWith({ watch: true, dryRun: false });
+    expect(orchestrateMock).toHaveBeenCalledWith({ watch: true, dryRun: false, restore: false });
   });
 
   it("dispatches `run --dry-run` to the orchestrator with dryRun=true", async () => {
     await run(["run", "--dry-run"]);
 
-    expect(orchestrateMock).toHaveBeenCalledWith({ watch: false, dryRun: true });
+    expect(orchestrateMock).toHaveBeenCalledWith({ watch: false, dryRun: true, restore: false });
   });
 
   it("dispatches `run --watch --dry-run` with both flags forwarded", async () => {
     await run(["run", "--watch", "--dry-run"]);
 
-    expect(orchestrateMock).toHaveBeenCalledWith({ watch: true, dryRun: true });
+    expect(orchestrateMock).toHaveBeenCalledWith({ watch: true, dryRun: true, restore: false });
   });
 
   it("enables verbose and strips --verbose before subcommand dispatch", async () => {
     await run(["run", "--verbose", "--dry-run"]);
 
     expect(isVerbose()).toBe(true);
-    expect(orchestrateMock).toHaveBeenCalledWith({ watch: false, dryRun: true });
+    expect(orchestrateMock).toHaveBeenCalledWith({ watch: false, dryRun: true, restore: false });
   });
 
   it("enables verbose from GROUNDCREW_VERBOSE without the flag", async () => {
@@ -237,7 +237,7 @@ describe(run, () => {
     await run(["run"]);
 
     expect(isVerbose()).toBe(true);
-    expect(orchestrateMock).toHaveBeenCalledWith({ watch: false, dryRun: false });
+    expect(orchestrateMock).toHaveBeenCalledWith({ watch: false, dryRun: false, restore: false });
   });
 
   it("leaves verbose off by default", async () => {
@@ -281,6 +281,20 @@ describe(run, () => {
     expect(consoleError.output()).toContain("--watch and --task are mutually exclusive");
     expect(process.exitCode).toBe(1);
     expect(setupMock).not.toHaveBeenCalled();
+    expect(orchestrateMock).not.toHaveBeenCalled();
+  });
+
+  it("dispatches `run --watch --restore` with restore forwarded", async () => {
+    await run(["run", "--watch", "--restore"]);
+
+    expect(orchestrateMock).toHaveBeenCalledWith({ watch: true, dryRun: false, restore: true });
+  });
+
+  it("rejects `run --restore` without --watch", async () => {
+    await run(["run", "--restore"]);
+
+    expect(consoleError.output()).toContain("--restore requires --watch");
+    expect(process.exitCode).toBe(1);
     expect(orchestrateMock).not.toHaveBeenCalled();
   });
 

@@ -87,6 +87,19 @@ vi.mock(import("../lib/runState.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, listRunStates: vi.fn<typeof actual.listRunStates>(() => []) };
 });
+// And for the stop snapshot: the watch loop's finally must not write a real
+// /tmp/last-session.json. Behavior is covered in orchestratorPause.test.ts.
+vi.mock(import("../lib/lastSession.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    readLastSession: vi.fn<typeof actual.readLastSession>(),
+    recordLastSession: vi.fn<typeof actual.recordLastSession>((input) => ({
+      stoppedAt: "2026-06-13T00:00:00.000Z",
+      tasks: input.tasks,
+    })),
+  };
+});
 vi.mock(import("./setupWorkspace.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, setupWorkspace: vi.fn<typeof setupWorkspace>() };

@@ -9,6 +9,12 @@ import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { loadConfigWithSource, type ResolvedConfig } from "../lib/config.ts";
 import { acquireKeepAwake } from "../lib/keepAwake.ts";
+import {
+  readLastSession,
+  recordLastSession,
+  runningSessionTasks,
+  selectRestoreTasks,
+} from "../lib/lastSession.ts";
 import { type PauseState, readPause } from "../lib/pause.ts";
 import { findPullRequestsForBranch } from "../lib/pullRequests.ts";
 import {
@@ -19,10 +25,12 @@ import {
 import { nextTickDelay } from "../lib/tickDelay.ts";
 import { getUsageByAgent, type UsageByAgent } from "../lib/usage.ts";
 import { errorMessage, log, sleep, writeOutput } from "../lib/util.ts";
+import { workspaces } from "../lib/workspaces.ts";
 import { worktrees } from "../lib/worktrees.ts";
 import { type Cleaner, createCleaner } from "./cleaner.ts";
 import { createDispatcher, type Dispatcher } from "./dispatcher.ts";
 import { listRunStates, recordTaskPullRequest } from "../lib/runState.ts";
+import { resumeWorkspace } from "./resumeWorkspace.ts";
 import { createReviewer, type Reviewer } from "./reviewer.ts";
 
 const RATE_LIMIT_DELAY_MS = 60_000;
@@ -78,6 +86,43 @@ class WatchLoopShutdownError extends Error {
 export interface OrchestratorOptions {
   watch: boolean;
   dryRun: boolean;
+  /** Resume tasks from the previous watch session's stop snapshot. */
+  restore?: boolean;
+}
+
+/**
+ * Resume the tasks recorded at the last watch shutdown whose workspaces
+ * did not survive the gap (reboot, tmux server death). Tasks still live
+ * are left alone; tasks cleaned up since the snapshot are skipped.
+ */
+async function restoreLastSession(config: ResolvedConfig): Promise<void> {
+  const session = readLastSession(config);
+  if (session === undefined || session.tasks.length === 0) {
+    log("Restore: no stopped session snapshot; starting fresh");
+    return;
+  }
+  const probe = await workspaces.probe(config);
+  const liveNames = probe.kind === "ok" ? probe.names : new Set<string>();
+  const selection = selectRestoreTasks({
+    session,
+    liveNames,
+    runStates: listRunStates(config),
+  });
+  for (const task of selection.stillLive) {
+    log(`Restore: ${task.task} is still live; leaving it alone`);
+  }
+  for (const task of selection.cleanedUp) {
+    log(`Restore: ${task.task} was cleaned up since the snapshot; skipping`);
+  }
+  for (const task of selection.resume) {
+    try {
+      log(`Restore: resuming ${task.task} (${task.agent} on ${task.repository})`);
+      // oxlint-disable-next-line no-await-in-loop -- resume launches sequentially on purpose
+      await resumeWorkspace(config, { task: task.task });
+    } catch (error) {
+      log(`Restore failed for ${task.task}: ${errorMessage(error)}`);
+    }
+  }
 }
 
 /**
@@ -184,6 +229,9 @@ export async function orchestrate(options: OrchestratorOptions): Promise<void> {
     await cleaner.runOnce(tickArguments);
   };
 
+  if (options.watch && options.restore === true) {
+    await restoreLastSession(config);
+  }
   await (options.watch ? runWatchLoop(tick, config) : tick());
 }
 
@@ -276,6 +324,10 @@ async function runWatchLoop(
       await sleep(delay, shutdown.signal);
     }
   } finally {
+    // Stop snapshot for `--restore`: which tasks were running when the
+    // watch loop went down. Their tmux windows usually outlive us; the
+    // snapshot matters when the whole machine goes down with them.
+    recordLastSession({ config, tasks: runningSessionTasks(listRunStates(config)) });
     keepAwake.release();
     if (forceExitTimer !== undefined) {
       clearTimeout(forceExitTimer);
