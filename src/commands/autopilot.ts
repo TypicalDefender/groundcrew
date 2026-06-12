@@ -12,6 +12,7 @@
 
 import { type AutopilotConfig, DEFAULT_AUTOPILOT, type ResolvedConfig } from "../lib/config.ts";
 import {
+  fetchReviewComments,
   findPullRequestsForBranch,
   isMergeablePullRequest,
   mergePullRequest,
@@ -20,6 +21,7 @@ import {
 } from "../lib/pullRequests.ts";
 import { buildCiFailureNudge } from "../lib/ciLogs.ts";
 import { recordTaskAutopilot, type RunState } from "../lib/runState.ts";
+import { formatReviewCommentsNudge, selectUndeliveredComments } from "../lib/reviewNudges.ts";
 import { errorMessage, log } from "../lib/util.ts";
 import { workspaces, type WorkspaceSendResult } from "../lib/workspaces.ts";
 
@@ -36,7 +38,14 @@ export type FollowUpAction =
       branchName: string;
       attempt: number;
     }
-  | { kind: "nudge-review-comments"; task: string; prUrl: string; workspaceName: string }
+  | {
+      kind: "nudge-review-comments";
+      task: string;
+      prUrl: string;
+      workspaceName: string;
+      worktreeDir: string;
+      deliveredCommentIds: readonly string[];
+    }
   | { kind: "flag-stuck"; task: string; stuckForMinutes: number };
 
 export interface DecideFollowUpsInput {
@@ -101,14 +110,15 @@ function decideReviewNudge(
   if (
     autopilot.reviewComments.enabled &&
     state.prUrl !== undefined &&
-    state.review === "changes-requested" &&
-    state.reviewNudgedAt === undefined
+    state.review === "changes-requested"
   ) {
     return {
       kind: "nudge-review-comments",
       task: state.task,
       prUrl: state.prUrl,
       workspaceName: state.workspaceName,
+      worktreeDir: state.worktreeDir,
+      deliveredCommentIds: state.nudgedCommentIds ?? [],
     };
   }
   return undefined;
@@ -197,15 +207,18 @@ export function hasAutopilotCandidates(
  * Memo housekeeping, separate from actions: counters and flags reset when
  * the condition that created them has passed.
  */
-export function staleMemoClears(
-  state: RunState,
-): ("ciNudgeAttempts" | "reviewNudgedAt" | "stuckSince")[] {
-  const clears: ("ciNudgeAttempts" | "reviewNudgedAt" | "stuckSince")[] = [];
+type AutopilotMemoKey = "ciNudgeAttempts" | "reviewNudgedAt" | "nudgedCommentIds" | "stuckSince";
+
+export function staleMemoClears(state: RunState): AutopilotMemoKey[] {
+  const clears: AutopilotMemoKey[] = [];
   if (state.ciNudgeAttempts !== undefined && state.ci !== "failing") {
     clears.push("ciNudgeAttempts");
   }
   if (state.reviewNudgedAt !== undefined && state.review !== "changes-requested") {
     clears.push("reviewNudgedAt");
+  }
+  if (state.nudgedCommentIds !== undefined && state.review !== "changes-requested") {
+    clears.push("nudgedCommentIds");
   }
   if (state.stuckSince !== undefined && state.pulse === "active") {
     clears.push("stuckSince");
@@ -232,20 +245,8 @@ export interface AutopilotDeps {
     action: Extract<FollowUpAction, { kind: "nudge-ci-failure" }>,
     signal?: AbortSignal,
   ) => string | Promise<string>;
-  /** Nudge body for requested changes; 6.4 swaps in the real comments. */
-  buildReviewNudge: (
-    action: Extract<FollowUpAction, { kind: "nudge-review-comments" }>,
-    signal?: AbortSignal,
-  ) => string | Promise<string>;
-}
-
-function defaultReviewNudge(
-  action: Extract<FollowUpAction, { kind: "nudge-review-comments" }>,
-): string {
-  return [
-    `Your pull request (${action.prUrl}) has review comments requesting changes.`,
-    "Please address them and push an update.",
-  ].join(" ");
+  /** Unresolved review threads for the PR; the nudge lists the new ones. */
+  fetchComments: typeof fetchReviewComments;
 }
 
 export const DEFAULT_AUTOPILOT_DEPS: AutopilotDeps = {
@@ -259,7 +260,7 @@ export const DEFAULT_AUTOPILOT_DEPS: AutopilotDeps = {
       branchName: action.branchName,
       ...(signal === undefined ? {} : { signal }),
     }),
-  buildReviewNudge: defaultReviewNudge,
+  fetchComments: fetchReviewComments,
 };
 
 export interface Autopilot {
@@ -307,6 +308,34 @@ export function createAutopilot(
     return false;
   }
 
+  async function executeReviewNudge(
+    action: Extract<FollowUpAction, { kind: "nudge-review-comments" }>,
+    now: Date,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const comments = await deps.fetchComments({
+      cwd: action.worktreeDir,
+      prUrl: action.prUrl,
+      ...(signal === undefined ? {} : { signal }),
+    });
+    const fresh = selectUndeliveredComments(comments, action.deliveredCommentIds);
+    if (fresh.length === 0) {
+      return;
+    }
+    log(`Autopilot: nudging ${action.task} with ${fresh.length} unresolved review comment(s)`);
+    const nudge = formatReviewCommentsNudge({ prUrl: action.prUrl, comments: fresh });
+    if (await executeNudge(action, nudge, signal)) {
+      recordTaskAutopilot({
+        config,
+        task: action.task,
+        set: {
+          reviewNudgedAt: now.toISOString(),
+          nudgedCommentIds: [...action.deliveredCommentIds, ...fresh.map((c) => c.id)],
+        },
+      });
+    }
+  }
+
   async function execute(action: FollowUpAction, now: Date, signal?: AbortSignal): Promise<void> {
     if (action.kind === "merge") {
       await executeMerge(action);
@@ -324,14 +353,7 @@ export function createAutopilot(
       return;
     }
     if (action.kind === "nudge-review-comments") {
-      log(`Autopilot: nudging ${action.task} about requested review changes`);
-      if (await executeNudge(action, await deps.buildReviewNudge(action, signal), signal)) {
-        recordTaskAutopilot({
-          config,
-          task: action.task,
-          set: { reviewNudgedAt: now.toISOString() },
-        });
-      }
+      await executeReviewNudge(action, now, signal);
       return;
     }
     log(

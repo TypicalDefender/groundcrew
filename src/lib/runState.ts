@@ -64,6 +64,8 @@ export interface RunState {
   ciNudgeAttempts?: number;
   /** Autopilot: when the review-comments nudge was delivered (cleared on review change). */
   reviewNudgedAt?: string;
+  /** Autopilot: review comment ids already delivered (cleared on review change). */
+  nudgedCommentIds?: readonly string[];
   /** Autopilot: when the task was flagged stuck (cleared when the pulse moves). */
   stuckSince?: string;
 }
@@ -129,6 +131,17 @@ function positiveIntegerField(value: Record<string, unknown>, key: string): numb
   return typeof field === "number" && Number.isInteger(field) && field > 0 ? field : undefined;
 }
 
+function stringArrayField(
+  value: Record<string, unknown>,
+  key: string,
+): readonly string[] | undefined {
+  const field = value[key];
+  if (!Array.isArray(field) || !field.every((entry) => typeof entry === "string")) {
+    return undefined;
+  }
+  return field;
+}
+
 function isRunLifecycleState(value: unknown): value is RunLifecycleState {
   return (
     value === "running" ||
@@ -190,6 +203,7 @@ interface OptionalRunStateFields {
   review: ReviewState | undefined;
   ciNudgeAttempts: number | undefined;
   reviewNudgedAt: string | undefined;
+  nudgedCommentIds: readonly string[] | undefined;
   stuckSince: string | undefined;
 }
 
@@ -210,6 +224,7 @@ function presentOptionalFields(fields: OptionalRunStateFields): Partial<RunState
     ...(fields.review === undefined ? {} : { review: fields.review }),
     ...(fields.ciNudgeAttempts === undefined ? {} : { ciNudgeAttempts: fields.ciNudgeAttempts }),
     ...(fields.reviewNudgedAt === undefined ? {} : { reviewNudgedAt: fields.reviewNudgedAt }),
+    ...(fields.nudgedCommentIds === undefined ? {} : { nudgedCommentIds: fields.nudgedCommentIds }),
     ...(fields.stuckSince === undefined ? {} : { stuckSince: fields.stuckSince }),
   };
 }
@@ -242,6 +257,7 @@ function parseRunState(value: unknown): RunState | undefined {
   const review = isReviewState(value["review"]) ? value["review"] : undefined;
   const ciNudgeAttempts = positiveIntegerField(value, "ciNudgeAttempts");
   const reviewNudgedAt = stringField(value, "reviewNudgedAt");
+  const nudgedCommentIds = stringArrayField(value, "nudgedCommentIds");
   const stuckSince = stringField(value, "stuckSince");
   if (
     task === undefined ||
@@ -285,6 +301,7 @@ function parseRunState(value: unknown): RunState | undefined {
       review,
       ciNudgeAttempts,
       reviewNudgedAt,
+      nudgedCommentIds,
       stuckSince,
     }),
   };
@@ -301,6 +318,7 @@ type ObservedRunStateFields = Pick<
   | "review"
   | "ciNudgeAttempts"
   | "reviewNudgedAt"
+  | "nudgedCommentIds"
   | "stuckSince"
 >;
 
@@ -315,6 +333,7 @@ function preservedObservations(existing: RunState | undefined): ObservedRunState
     review: existing?.review,
     ciNudgeAttempts: existing?.ciNudgeAttempts,
     reviewNudgedAt: existing?.reviewNudgedAt,
+    nudgedCommentIds: existing?.nudgedCommentIds,
     stuckSince: existing?.stuckSince,
   };
 }
@@ -498,9 +517,11 @@ export interface RecordTaskAutopilotInput {
   config: ResolvedConfig;
   task: string;
   /** Fields to set; omitted fields are left alone. */
-  set?: Partial<Pick<RunState, "ciNudgeAttempts" | "reviewNudgedAt" | "stuckSince">>;
+  set?: Partial<
+    Pick<RunState, "ciNudgeAttempts" | "reviewNudgedAt" | "nudgedCommentIds" | "stuckSince">
+  >;
   /** Fields to remove. */
-  clear?: readonly ("ciNudgeAttempts" | "reviewNudgedAt" | "stuckSince")[];
+  clear?: readonly ("ciNudgeAttempts" | "reviewNudgedAt" | "nudgedCommentIds" | "stuckSince")[];
 }
 
 /**
@@ -518,6 +539,8 @@ export function recordTaskAutopilot(input: RecordTaskAutopilotInput): RunState |
       delete state.ciNudgeAttempts;
     } else if (key === "reviewNudgedAt") {
       delete state.reviewNudgedAt;
+    } else if (key === "nudgedCommentIds") {
+      delete state.nudgedCommentIds;
     } else {
       delete state.stuckSince;
     }

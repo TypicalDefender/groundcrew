@@ -18,6 +18,7 @@ export {
   type FollowUpAction,
 } from "./commands/autopilot.ts";
 export { recordTaskAutopilot, type RecordTaskAutopilotInput } from "./lib/runState.ts";
+export { formatReviewCommentsNudge, selectUndeliveredComments } from "./lib/reviewNudges.ts";
 export {
   buildCiFailureNudge,
   excerptLastLines,

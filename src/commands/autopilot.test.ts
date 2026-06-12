@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import type { AutopilotConfig, ResolvedConfig } from "../lib/config.ts";
-import type { PullRequestSummary } from "../lib/pullRequests.ts";
+import type { PullRequestSummary, ReviewComment } from "../lib/pullRequests.ts";
 import {
   readRunState,
   recordRunState,
@@ -112,6 +112,18 @@ function decide(
   });
 }
 
+function reviewComment(id: string, body: string): ReviewComment {
+  return {
+    id,
+    threadId: `t-${id}`,
+    author: "alice",
+    body,
+    url: `https://github.com/acme/repo-a/pull/7#discussion_${id}`,
+    path: "src/lib/board.ts",
+    line: 12,
+  };
+}
+
 const FAILING_PR = {
   prUrl: "https://github.com/acme/repo-a/pull/7",
   ci: "failing",
@@ -157,19 +169,26 @@ describe(decideFollowUps, () => {
     expect(decide([gone], ALL_ON, new Set<string>())).toStrictEqual([]);
   });
 
-  it("nudges requested changes once, then stays quiet until the memo clears", () => {
+  it("proposes a review nudge for changes-requested, carrying the delivered ids", () => {
     const fresh = runState("team-1", {
       prUrl: "https://github.com/acme/repo-a/pull/7",
       review: "changes-requested",
     });
-    const nudged = runState("team-1", {
+    const partiallyDelivered = runState("team-1", {
       prUrl: "https://github.com/acme/repo-a/pull/7",
       review: "changes-requested",
-      reviewNudgedAt: "2026-06-13T07:30:00.000Z",
+      nudgedCommentIds: ["c1"],
     });
 
-    expect(decide([fresh], ALL_ON)[0]).toMatchObject({ kind: "nudge-review-comments" });
-    expect(decide([nudged], ALL_ON)).toStrictEqual([]);
+    expect(decide([fresh], ALL_ON)[0]).toMatchObject({
+      kind: "nudge-review-comments",
+      deliveredCommentIds: [],
+    });
+    // Still proposed — the executor decides whether anything NEW exists.
+    expect(decide([partiallyDelivered], ALL_ON)[0]).toMatchObject({
+      kind: "nudge-review-comments",
+      deliveredCommentIds: ["c1"],
+    });
     expect(decide([fresh], ALL_OFF)).toStrictEqual([]);
   });
 
@@ -257,18 +276,20 @@ describe(staleMemoClears, () => {
           ciNudgeAttempts: 2,
           ci: "passing",
           reviewNudgedAt: "x",
+          nudgedCommentIds: ["c1"],
           review: "approved",
           stuckSince: "x",
           pulse: "active",
         }),
       ),
-    ).toStrictEqual(["ciNudgeAttempts", "reviewNudgedAt", "stuckSince"]);
+    ).toStrictEqual(["ciNudgeAttempts", "reviewNudgedAt", "nudgedCommentIds", "stuckSince"]);
     expect(
       staleMemoClears(
         runState("team-1", {
           ciNudgeAttempts: 1,
           ci: "failing",
           reviewNudgedAt: "x",
+          nudgedCommentIds: ["c1"],
           review: "changes-requested",
           stuckSince: "x",
           pulse: "idle",
@@ -286,6 +307,7 @@ describe(createAutopilot, () => {
   let deps: AutopilotDeps;
   let summaries: PullRequestSummary[];
   let merged: PullRequestSummary[];
+  let comments: ReviewComment[];
 
   beforeEach(() => {
     stateRoot = mkdtempSync(path.join(tmpdir(), "groundcrew-autopilot-"));
@@ -295,6 +317,7 @@ describe(createAutopilot, () => {
     sent = [];
     summaries = [];
     merged = [];
+    comments = [];
     deps = {
       sendText: async (_config, name, text) => {
         sent.push({ name, text });
@@ -306,7 +329,7 @@ describe(createAutopilot, () => {
         return { outcome: "merged" };
       },
       buildCiFailureNudge: (action) => `fix CI on ${action.prUrl}`,
-      buildReviewNudge: (action) => `address comments on ${action.prUrl}`,
+      fetchComments: async () => comments,
     };
   });
 
@@ -361,6 +384,7 @@ describe(createAutopilot, () => {
     deps.sendText = async () => ({ kind: "unavailable" });
     const autopilot = createAutopilot({ config }, deps);
 
+    comments = [reviewComment("c1", "use a Map here")];
     await autopilot.runOnce({ runStates: statesWith(FAILING_PR), now: NOW });
     await autopilot.runOnce({
       runStates: statesWith({
@@ -372,6 +396,7 @@ describe(createAutopilot, () => {
 
     expect(readRunState(config, "team-1")?.ciNudgeAttempts).toBeUndefined();
     expect(readRunState(config, "team-1")?.reviewNudgedAt).toBeUndefined();
+    expect(readRunState(config, "team-1")?.nudgedCommentIds).toBeUndefined();
     expect(consoleLog.output()).toContain("could not deliver nudge to team-1 (unavailable)");
   });
 
@@ -380,36 +405,58 @@ describe(createAutopilot, () => {
     recordTaskAutopilot({
       config,
       task: "team-1",
-      set: { ciNudgeAttempts: 1, reviewNudgedAt: "x", stuckSince: "y" },
+      set: { ciNudgeAttempts: 1, reviewNudgedAt: "x", nudgedCommentIds: ["c1"], stuckSince: "y" },
     });
     expect(readRunState(config, "team-1")).toMatchObject({
       ciNudgeAttempts: 1,
       reviewNudgedAt: "x",
+      nudgedCommentIds: ["c1"],
       stuckSince: "y",
     });
 
     recordTaskAutopilot({
       config,
       task: "team-1",
-      clear: ["ciNudgeAttempts", "reviewNudgedAt", "stuckSince"],
+      clear: ["ciNudgeAttempts", "reviewNudgedAt", "nudgedCommentIds", "stuckSince"],
     });
     const cleared = readRunState(config, "team-1");
     expect(cleared?.ciNudgeAttempts).toBeUndefined();
     expect(cleared?.reviewNudgedAt).toBeUndefined();
+    expect(cleared?.nudgedCommentIds).toBeUndefined();
     expect(cleared?.stuckSince).toBeUndefined();
   });
 
-  it("delivers the review nudge once and records the memo", async () => {
+  it("delivers each review comment exactly once across ticks", async () => {
     seed();
     const autopilot = createAutopilot({ config }, deps);
     const review = {
       prUrl: "https://github.com/acme/repo-a/pull/7",
       review: "changes-requested",
     } as const;
+    comments = [reviewComment("c1", "use a Map here")];
 
+    await autopilot.runOnce({
+      runStates: statesWith(review),
+      now: NOW,
+      signal: new AbortController().signal,
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.text).toContain("src/lib/board.ts:12 (alice)");
+    expect(sent[0]?.text).toContain("use a Map here");
+    expect(readRunState(config, "team-1")?.nudgedCommentIds).toStrictEqual(["c1"]);
+    expect(readRunState(config, "team-1")?.reviewNudgedAt).toBe(NOW.toISOString());
+
+    // Same comments next tick: nothing new, nothing sent.
     await autopilot.runOnce({ runStates: statesWith(review), now: NOW });
     expect(sent).toHaveLength(1);
-    expect(readRunState(config, "team-1")?.reviewNudgedAt).toBe(NOW.toISOString());
+
+    // A new comment appears: only the new one is delivered.
+    comments = [reviewComment("c1", "use a Map here"), reviewComment("c2", "rename this")];
+    await autopilot.runOnce({ runStates: statesWith(review), now: NOW });
+    expect(sent).toHaveLength(2);
+    expect(sent[1]?.text).toContain("rename this");
+    expect(sent[1]?.text).not.toContain("use a Map here");
+    expect(readRunState(config, "team-1")?.nudgedCommentIds).toStrictEqual(["c1", "c2"]);
   });
 
   it("merges through the PR seams and reports refusals", async () => {
@@ -512,13 +559,6 @@ describe(createAutopilot, () => {
       attempt: 1,
     });
     expect(unsignaled).toContain("CI is failing");
-    const review = await DEFAULT_AUTOPILOT_DEPS.buildReviewNudge({
-      kind: "nudge-review-comments",
-      task: "team-1",
-      prUrl: "https://github.com/acme/repo-a/pull/7",
-      workspaceName: "team-1",
-    });
-    expect(review).toContain("review comments requesting changes");
   });
 
   it("reports a refused merge and ignores bookkeeping for unknown tasks", async () => {
