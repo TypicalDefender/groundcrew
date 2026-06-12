@@ -4,6 +4,7 @@ import path from "node:path";
 
 import type { ResolvedConfig } from "./config.ts";
 import {
+  listRunStates,
   readRunState,
   recordRunState,
   removeRunState,
@@ -417,5 +418,53 @@ describe("run state store", () => {
       task: "team-1",
       state: "running",
     });
+  });
+
+  it("lists no run states when the directory does not exist", () => {
+    expect(listRunStates(config)).toStrictEqual([]);
+  });
+
+  it("lists every parseable run state sorted by task id", () => {
+    for (const task of ["team-2", "team-1"]) {
+      recordRunState({
+        config,
+        state: {
+          task,
+          repository: "repo-a",
+          agent: "claude",
+          worktreeDir: `/work/repo-a-${task}`,
+          branchName: `dev-${task}`,
+          workspaceName: task,
+          state: "running",
+        },
+      });
+    }
+
+    const actual = listRunStates(config);
+
+    expect(actual.map((state) => state.task)).toStrictEqual(["team-1", "team-2"]);
+  });
+
+  it("skips non-state files and unparseable records when listing", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "running",
+      },
+    });
+    const directory = runStateDirectory(config);
+    writeFileSync(path.join(directory, "team-2.json"), "not json");
+    writeFileSync(path.join(directory, "Team Notes.json"), "{}");
+    writeFileSync(path.join(directory, "readme.txt"), "ignore me");
+
+    const actual = listRunStates(config);
+
+    expect(actual.map((state) => state.task)).toStrictEqual(["team-1"]);
   });
 });

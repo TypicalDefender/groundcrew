@@ -1,8 +1,8 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import type { ResolvedConfig } from "./config.ts";
-import { normalizePlainTaskId } from "./taskId.ts";
+import { isPlainTaskId, normalizePlainTaskId } from "./taskId.ts";
 
 export type RunLifecycleState = "running" | "interrupted" | "resumed" | "failed-to-launch";
 
@@ -177,6 +177,36 @@ export function readRunState(config: ResolvedConfig, task: string): RunState | u
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Read every parseable run state in the state directory, sorted by task id.
+ * Files that aren't `<task>.json` or fail to parse are skipped — a corrupt
+ * record degrades to "no run state" exactly as it does in `readRunState`.
+ * A missing directory means no task has ever been dispatched: empty fleet.
+ */
+export function listRunStates(config: ResolvedConfig): RunState[] {
+  let fileNames: string[];
+  try {
+    fileNames = readdirSync(runStateDirectory(config));
+  } catch {
+    return [];
+  }
+  const states: RunState[] = [];
+  for (const fileName of fileNames) {
+    if (!fileName.endsWith(".json")) {
+      continue;
+    }
+    const task = fileName.slice(0, -".json".length);
+    if (!isPlainTaskId(task)) {
+      continue;
+    }
+    const state = readRunState(config, task);
+    if (state !== undefined) {
+      states.push(state);
+    }
+  }
+  return states.toSorted((left, right) => left.task.localeCompare(right.task));
 }
 
 export function recordRunState(input: RecordRunStateInput): RunState {

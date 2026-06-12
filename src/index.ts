@@ -19,6 +19,20 @@ export type {
 } from "./lib/config.ts";
 export { loadConfig } from "./lib/config.ts";
 export {
+  collectFleetSnapshot,
+  joinFleetSnapshot,
+  type CollectFleetSnapshotInput,
+  type FleetBoardFeed,
+  type FleetFeedHealth,
+  type FleetIssue,
+  type FleetSnapshot,
+  type FleetTask,
+  type FleetWorkspaceLiveness,
+  type FleetWorktree,
+  type JoinFleetSnapshotInput,
+} from "./lib/fleet.ts";
+export {
+  listRunStates,
   readRunState,
   recordRunState,
   removeRunState,
