@@ -40,6 +40,8 @@ function pullRequest(overrides: Partial<PullRequestSummary> = {}): PullRequestSu
     title: overrides.title ?? "PR title",
     headRefOid: overrides.headRefOid ?? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     ci: overrides.ci ?? "unknown",
+    review: overrides.review ?? "none",
+    unresolvedComments: overrides.unresolvedComments ?? 0,
   };
 }
 

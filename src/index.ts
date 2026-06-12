@@ -76,10 +76,14 @@ export {
 } from "./lib/adapters/linear/parsing.ts";
 export {
   clearPullRequestLookupCache,
+  fetchReviewComments,
   findPullRequestsForBranch,
   summarizeCheckRollup,
   type CiStatus,
+  type FetchReviewCommentsInput,
   type PullRequestSummary,
+  type ReviewComment,
+  type ReviewState,
 } from "./lib/pullRequests.ts";
 export { getUsageByAgent, type UsageByAgent } from "./lib/usage.ts";
 export { type Board, createBoard } from "./lib/board.ts";

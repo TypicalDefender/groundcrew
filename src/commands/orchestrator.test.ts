@@ -1339,6 +1339,8 @@ JSON
           title: "PR",
           headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           ci: "unknown",
+          review: "none",
+          unresolvedComments: 0,
         },
       ]);
       const client = makeClient({ pages: [[]] });

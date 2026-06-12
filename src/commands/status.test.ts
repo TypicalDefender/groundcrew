@@ -599,6 +599,8 @@ describe(status, () => {
         title: "Wire up auth",
         headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         ci: "unknown",
+        review: "none",
+        unresolvedComments: 0,
       },
     ]);
 
@@ -794,6 +796,8 @@ describe(status, () => {
         title: "Wire up auth",
         headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         ci: "unknown",
+        review: "none",
+        unresolvedComments: 0,
       },
     ]);
 
@@ -818,6 +822,8 @@ describe(status, () => {
         title: "a",
         headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         ci: "unknown",
+        review: "none",
+        unresolvedComments: 0,
       },
       {
         url: "https://x/pull/2",
@@ -826,6 +832,8 @@ describe(status, () => {
         title: "b",
         headRefOid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         ci: "unknown",
+        review: "none",
+        unresolvedComments: 0,
       },
     ]);
 
@@ -857,6 +865,8 @@ describe(status, () => {
         title: "Something",
         headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         ci: "unknown",
+        review: "none",
+        unresolvedComments: 0,
       },
     ]);
 
