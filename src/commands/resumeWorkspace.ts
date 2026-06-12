@@ -3,6 +3,7 @@ import { getLinearClient } from "../lib/adapters/linear/client.ts";
 import { isLinearEnabled } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
+import { workerEnvironmentForTask } from "../lib/launchCommand.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
 import {
   removeStagedPrompt,
@@ -10,7 +11,7 @@ import {
   stagePromptText,
   stageWorkspaceLaunchCommand,
 } from "../lib/stagedLaunch.ts";
-import { naturalIdFromCanonical } from "../lib/taskSource.ts";
+import { naturalIdFromCanonical, toCanonicalId } from "../lib/taskSource.ts";
 import { errorMessage, log } from "../lib/util.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import { resolveLaunchDir, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
@@ -31,6 +32,7 @@ interface ResumeContext {
   worktree: WorktreeEntry;
   title: string;
   description: string;
+  completionTaskId: string;
   reason?: string;
   resumeCount: number;
 }
@@ -69,6 +71,7 @@ async function contextFromLinear(
     worktree,
     title: resolved.title,
     description: resolved.description,
+    completionTaskId: toCanonicalId("linear", task),
     resumeCount: 0,
   };
 }
@@ -90,6 +93,7 @@ async function contextFromState(
     worktree,
     title: details?.title ?? task.toUpperCase(),
     description: details?.description ?? "",
+    completionTaskId: state.completionTaskId ?? task,
     ...(state.reason === undefined ? {} : { reason: state.reason }),
     resumeCount: state.resumeCount,
   };
@@ -196,6 +200,7 @@ export async function resumeWorkspace(
       workingDir: launchDir,
       secretsFile,
       sandboxName,
+      workerEnvironment: workerEnvironmentForTask(context.completionTaskId),
     }));
     const launchCmd = stageWorkspaceLaunchCommand(stagedPrompt.directory, launchCommand);
     await openAgentWorkspace({
@@ -226,6 +231,7 @@ export async function resumeWorkspace(
       workspaceName: task,
       state: "resumed",
       resumeCount: context.resumeCount + 1,
+      completionTaskId: context.completionTaskId,
       ...(context.reason === undefined ? {} : { reason: context.reason }),
     },
   });

@@ -8,7 +8,7 @@ import {
   type ResolvedConfig,
 } from "./config.ts";
 import { detectHostCapabilities } from "./host.ts";
-import { buildLaunchCommand } from "./launchCommand.ts";
+import { buildLaunchCommand, type WorkerEnvironment } from "./launchCommand.ts";
 import { assertLocalRunnerRequirements, resolveLocalRunner } from "./localRunner.ts";
 import { sandboxNameFor } from "./sandboxName.ts";
 import { buildAndStageSrtLaunch, resolveGitCommonDir } from "./srtLaunch.ts";
@@ -32,6 +32,7 @@ export function composeAgentLaunch(input: {
   secretsFile?: string | undefined;
   prepareWorktreeCommand?: string | undefined;
   sandboxName?: string | undefined;
+  workerEnvironment?: WorkerEnvironment | undefined;
 }): { launchCommand: string; srtSettingsDir: string | undefined } {
   const staged =
     input.runner === "srt"
@@ -54,6 +55,7 @@ export function composeAgentLaunch(input: {
     srtAgentSettingsFile: staged?.agentFile,
     srtSettingsDir: staged?.directory,
     srtAgentConfigDirEnv: staged?.agentConfigDirEnv,
+    workerEnvironment: input.workerEnvironment,
     safehouseAddDirs:
       input.runner === "safehouse" ? resolveSafehouseAddDirs(input.worktreeDir) : undefined,
   });
@@ -131,6 +133,12 @@ export async function prepareAgentLaunch(input: {
     throw new Error(
       `Local groundcrew ${input.purpose} on agent '${input.agent}' cannot inject preLaunchEnv when 'cmd' already starts with 'safehouse'. ` +
         "Your cmd owns the wrap, so add the names to its own '--env-pass=' flag, or drop the 'safehouse' prefix from 'cmd' to let groundcrew compose the flag for you.",
+    );
+  }
+  if (runner === "safehouse" && /^safehouse(?:\s|$)/.test(input.definition.cmd)) {
+    throw new Error(
+      `Local groundcrew ${input.purpose} on agent '${input.agent}' cannot inject worker self-completion env when 'cmd' already starts with 'safehouse'. ` +
+        "Your cmd owns the wrap, so add GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE to its own '--env-pass=' flag, or drop the 'safehouse' prefix from 'cmd' to let groundcrew compose the flag for you.",
     );
   }
 
