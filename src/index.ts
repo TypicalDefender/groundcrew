@@ -38,6 +38,8 @@ export type {
   AutopilotConfig,
   AutopilotUserConfig,
   Config,
+  NotificationRoutingConfig,
+  NotifierEntryConfig,
   HookCommands,
   AgentDefinition,
   KnownRepository,
@@ -146,6 +148,25 @@ export {
   type ReviewState,
 } from "./lib/pullRequests.ts";
 export { getUsageByAgent, type UsageByAgent } from "./lib/usage.ts";
+export {
+  CREW_EVENT_PRIORITY,
+  makeCrewEvent,
+  type CrewEvent,
+  type CrewEventKind,
+  type CrewEventPriority,
+  type MakeCrewEventInput,
+} from "./lib/crewEvents.ts";
+export type { Notifier, NotifierContext, NotifierDefinition } from "./lib/notifierDefinition.ts";
+export { notifierRegistry } from "./lib/notifiers/registry.ts";
+export {
+  buildNotifiers,
+  buildNotifiersWith,
+  dispatchCrewEvent,
+  notificationRouting,
+  routeEvent,
+  type DispatchCrewEventInput,
+  type NotificationRouting,
+} from "./lib/notifiers/resolve.ts";
 export { type Board, createBoard } from "./lib/board.ts";
 export { buildSources, buildSourcesWith, sourcesFromConfig } from "./lib/buildSources.ts";
 export type { AdapterContext, AdapterDefinition } from "./lib/adapterDefinition.ts";

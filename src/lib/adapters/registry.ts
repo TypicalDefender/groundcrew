@@ -21,14 +21,16 @@ export type AdapterLoader = (directoryName: string) => Promise<AdapterDefinition
 
 /**
  * Pure logic: given a list of subdirectory names and an async loader, build a
- * `kind → AdapterDefinition` registry. Enforces directory-name === kind and
- * rejects duplicate kinds. No filesystem or import side effects of its own.
+ * `kind → definition` registry. Generic over the definition shape so the
+ * notifier registry (src/lib/notifiers) reuses it. Enforces directory-name
+ * === kind and rejects duplicate kinds. No filesystem or import side
+ * effects of its own.
  */
-export async function buildRegistry(
+export async function buildRegistry<TDefinition extends { kind: string }>(
   directoryNames: readonly string[],
-  loader: AdapterLoader,
-): Promise<Record<string, AdapterDefinition>> {
-  const registry: Record<string, AdapterDefinition> = {};
+  loader: (directoryName: string) => Promise<TDefinition>,
+): Promise<Record<string, TDefinition>> {
+  const registry: Record<string, TDefinition> = {};
   for (const name of directoryNames) {
     // oxlint-disable-next-line no-await-in-loop -- adapter loading is sequential by design
     const def = await loader(name);
@@ -56,7 +58,9 @@ export async function buildRegistry(
  *   system that every adapter's configSchema is a discriminable type —
  *   semantically equivalent here because each kind has a unique literal.
  */
-export function buildSourceConfigSchema(registry: Record<string, AdapterDefinition>): z.ZodType {
+export function buildSourceConfigSchema(
+  registry: Record<string, { configSchema: z.ZodType }>,
+): z.ZodType {
   const schemas = Object.values(registry).map((a) => a.configSchema);
   const [first, second, ...rest] = schemas;
   if (first === undefined) {

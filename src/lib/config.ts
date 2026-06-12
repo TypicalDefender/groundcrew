@@ -58,6 +58,19 @@ export interface AutopilotUserConfig {
   stuck?: { enabled: boolean; thresholdMinutes?: number };
 }
 
+/** One notifier block; per-kind Zod validation runs at `buildNotifiers` time. */
+export interface NotifierEntryConfig {
+  kind: string;
+  [key: string]: unknown;
+}
+
+/** Which notifier kinds each event priority reaches; absent = all. */
+export interface NotificationRoutingConfig {
+  urgent?: string[];
+  action?: string[];
+  info?: string[];
+}
+
 /** Slow-poll window in local "HH:MM" times; may wrap past midnight. */
 export interface QuietHoursConfig {
   /** Inclusive window start, 24-hour "HH:MM". */
@@ -323,6 +336,10 @@ export interface Config {
   };
   /** Automatic follow-ups; see `AutopilotConfig` for the resolved shape. */
   autopilot?: AutopilotUserConfig;
+  /** Notification sinks, e.g. `[{ kind: "desktop" }, { kind: "slack", webhookUrl: "..." }]`. */
+  notifiers?: NotifierEntryConfig[];
+  /** Priority → notifier kinds routing; omit to send everything everywhere. */
+  notifications?: NotificationRoutingConfig;
   logging?: {
     /**
      * Append-mode log file destination. `log()` and `logEvent()` tee here
@@ -409,6 +426,10 @@ export interface ResolvedConfig {
    * `DEFAULT_AUTOPILOT` when absent.
    */
   autopilot?: AutopilotConfig;
+  /** Notifier blocks; per-kind validation happens at `buildNotifiers` time. */
+  notifiers?: NotifierEntryConfig[];
+  /** Priority routing; absent means every configured notifier gets everything. */
+  notifications?: NotificationRoutingConfig;
   logging: {
     file: string;
   };
@@ -1095,6 +1116,8 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
   // message rather than whatever later normalization trips over first.
   const local = normalizeLocal((user as { local?: unknown }).local);
   const autopilot = normalizeAutopilot((user as { autopilot?: unknown }).autopilot);
+  const notifiers = normalizeNotifiers((user as { notifiers?: unknown }).notifiers);
+  const notifications = normalizeNotifications((user as { notifications?: unknown }).notifications);
 
   const sources = normalizeSources((user as { sources?: unknown }).sources);
   const branchPrefix = normalizeBranchPrefix(user.git?.branchPrefix);
@@ -1120,6 +1143,8 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
     workspaceKind: normalizeWorkspaceKind(user.workspaceKind, "workspaceKind") ?? "auto",
     local,
     autopilot,
+    notifiers,
+    ...(notifications === undefined ? {} : { notifications }),
     logging: {
       file: expandHome(
         normalizeOptionalString(user.logging?.file, "logging.file") ?? defaultLogFile(),
@@ -1256,6 +1281,51 @@ function normalizeAutopilot(raw: unknown): AutopilotConfig {
               DEFAULT_AUTOPILOT.stuck.thresholdMinutes,
             ),
           },
+  };
+}
+
+function normalizeNotifiers(raw: unknown): NotifierEntryConfig[] {
+  if (raw === undefined) {
+    return [];
+  }
+  if (!Array.isArray(raw)) {
+    fail("notifiers must be an array");
+  }
+  return raw.map((entry, index) => {
+    if (!isPlainObject(entry) || typeof entry["kind"] !== "string" || entry["kind"] === "") {
+      fail(`notifiers[${index}] must be an object with a string \`kind\``);
+    }
+    return { ...entry, kind: entry["kind"] };
+  });
+}
+
+function routingKinds(record: Record<string, unknown>, key: string): string[] | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
+    fail(`notifications.${key} must be an array of notifier kinds`);
+  }
+  return value;
+}
+
+function normalizeNotifications(raw: unknown): NotificationRoutingConfig | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (!isPlainObject(raw)) {
+    fail(
+      'notifications must be an object like { urgent: ["desktop"], action: [], info: ["slack"] }',
+    );
+  }
+  const urgent = routingKinds(raw, "urgent");
+  const action = routingKinds(raw, "action");
+  const info = routingKinds(raw, "info");
+  return {
+    ...(urgent === undefined ? {} : { urgent }),
+    ...(action === undefined ? {} : { action }),
+    ...(info === undefined ? {} : { info }),
   };
 }
 

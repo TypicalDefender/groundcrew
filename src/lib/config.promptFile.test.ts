@@ -11,6 +11,8 @@ import type {
   AutopilotUserConfig,
   Config,
   LoadedConfig,
+  NotificationRoutingConfig,
+  NotifierEntryConfig,
   QuietHoursConfig,
   ResolvedConfig,
 } from "./config.ts";
@@ -375,6 +377,84 @@ describe("loadConfig prompts.promptFile", () => {
         autopilot: { ciFailure: { enabled: true, maxAttempts: 0 } },
       },
       /autopilot\.ciFailure\.maxAttempts must be an integer ≥ 1, got 0/,
+    );
+  });
+
+  it("resolves notifier blocks and routing, defaulting to none and broadcast", async () => {
+    const bare = writeConfigFile(
+      temporary,
+      validConfigSource({ workspace: VALID_WORKSPACE(temporary) }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", bare);
+    const { loadConfig } = await loadFreshConfig();
+    const resolved = await loadConfig();
+    expect(resolved.notifiers).toStrictEqual([]);
+    expect(resolved.notifications).toBeUndefined();
+
+    const configured = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        notifiers: [{ kind: "desktop" }, { kind: "webhook", url: "https://example.test/hook" }],
+        notifications: { urgent: ["desktop"], action: ["webhook"] },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configured);
+    const fresh = await loadFreshConfig();
+    await expect(fresh.loadConfig()).resolves.toMatchObject({
+      notifiers: [{ kind: "desktop" }, { kind: "webhook", url: "https://example.test/hook" }],
+      notifications: { urgent: ["desktop"], action: ["webhook"] },
+    });
+
+    const infoOnly = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        notifications: { info: ["desktop"] },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", infoOnly);
+    const partial = await loadFreshConfig();
+    const resolvedPartial = await partial.loadConfig();
+    expect(resolvedPartial.notifications).toStrictEqual({ info: ["desktop"] });
+  });
+
+  it("rejects malformed notifier blocks and routing tables", async () => {
+    await expectConfigRejection(
+      temporary,
+      {
+        workspace: VALID_WORKSPACE(temporary),
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- exercising the runtime shape guard
+        notifiers: "desktop" as unknown as NotifierEntryConfig[],
+      },
+      /notifiers must be an array/,
+    );
+    await expectConfigRejection(
+      temporary,
+      {
+        workspace: VALID_WORKSPACE(temporary),
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- exercising the runtime shape guard
+        notifiers: [{ url: "x" }] as unknown as NotifierEntryConfig[],
+      },
+      /notifiers\[0\] must be an object with a string `kind`/,
+    );
+    await expectConfigRejection(
+      temporary,
+      {
+        workspace: VALID_WORKSPACE(temporary),
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- exercising the runtime shape guard
+        notifications: "all" as unknown as NotificationRoutingConfig,
+      },
+      /notifications must be an object like/,
+    );
+    await expectConfigRejection(
+      temporary,
+      {
+        workspace: VALID_WORKSPACE(temporary),
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- exercising the runtime shape guard
+        notifications: { urgent: [7] } as unknown as NotificationRoutingConfig,
+      },
+      /notifications\.urgent must be an array of notifier kinds/,
     );
   });
 
