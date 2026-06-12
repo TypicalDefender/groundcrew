@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { postAction } from "@/lib/postAction";
+
 type SendState = "idle" | "sending" | "sent" | "failed";
 
 /** Message box in the drawer: type a nudge, deliver it to the agent's pane. */
@@ -13,31 +15,14 @@ export function NudgeBox({ task }: { task: string }): React.ReactElement {
   async function send(): Promise<void> {
     setState("sending");
     setError(undefined);
-    try {
-      const response = await fetch(`/api/tasks/${encodeURIComponent(task)}/nudge`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-      if (response.ok) {
-        setState("sent");
-        setText("");
-        return;
-      }
-      const body: unknown = await response.json();
-      const message =
-        typeof body === "object" &&
-        body !== null &&
-        "error" in body &&
-        typeof body.error === "string"
-          ? body.error
-          : `request failed (${response.status})`;
-      setState("failed");
-      setError(message);
-    } catch {
-      setState("failed");
-      setError("network error");
+    const failure = await postAction(`/api/tasks/${encodeURIComponent(task)}/nudge`, { text });
+    if (failure === undefined) {
+      setState("sent");
+      setText("");
+      return;
     }
+    setState("failed");
+    setError(failure);
   }
 
   return (

@@ -37,7 +37,7 @@ test("clicking a card opens the detail drawer with run state and PR facts", asyn
 test("an SSE tick updates a card without reloading the page", async ({ page }) => {
   await page.goto("/");
 
-  const card = page.locator("button", { hasText: "Fix login retry race" });
+  const card = page.getByRole("button", { name: /Fix login retry race/ });
   await expect(card.getByText("active")).toBeVisible();
 
   // Flip the task's pulse on disk; the next poll tick must repaint the card.

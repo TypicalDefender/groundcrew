@@ -17,6 +17,16 @@ export interface BoardBuckets {
 }
 
 /**
+ * A todo the deck can launch: the source resolved both an agent and a
+ * repository for it (the same bar the dispatcher applies).
+ */
+export function canStart(task: FleetTask): boolean {
+  return (
+    task.status === "todo" && task.issue?.agent !== undefined && task.issue.repository !== undefined
+  );
+}
+
+/**
  * A task needs the operator when its agent is waiting or stuck
  * (pulse `awaiting-input`/`blocked`) or its PR went red
  * (CI `failing` or review `changes-requested`).

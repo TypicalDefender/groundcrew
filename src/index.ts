@@ -99,7 +99,7 @@ export {
 } from "./lib/pullRequests.ts";
 export { getUsageByAgent, type UsageByAgent } from "./lib/usage.ts";
 export { type Board, createBoard } from "./lib/board.ts";
-export { buildSources, buildSourcesWith } from "./lib/buildSources.ts";
+export { buildSources, buildSourcesWith, sourcesFromConfig } from "./lib/buildSources.ts";
 export type { AdapterContext, AdapterDefinition } from "./lib/adapterDefinition.ts";
 export {
   adapterRegistry,
@@ -113,6 +113,7 @@ export {
   type Blocker as CanonicalBlocker,
   type BoardState as CanonicalBoardState,
   type CanonicalStatus,
+  type CreateTaskInput,
   type GroundcrewIssue as CanonicalGroundcrewIssue,
   type Issue as CanonicalIssue,
   isGroundcrewIssue as isCanonicalGroundcrewIssue,

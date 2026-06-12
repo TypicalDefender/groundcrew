@@ -1,6 +1,6 @@
 import type { FleetTask } from "@clipboard-health/groundcrew";
 
-import { BOARD_COLUMNS, bucketTasks, columnFor, needsAttention } from "@/lib/boardModel";
+import { BOARD_COLUMNS, bucketTasks, canStart, columnFor, needsAttention } from "@/lib/boardModel";
 
 function task(overrides: Partial<FleetTask> & { id: string }): FleetTask {
   return {
@@ -100,5 +100,36 @@ describe(bucketTasks, () => {
     const total =
       buckets.needsYou.length + BOARD_COLUMNS.reduce((n, c) => n + buckets.columns[c].length, 0);
     expect(total).toBe(fleet.length);
+  });
+});
+
+function issue(
+  overrides: Partial<NonNullable<FleetTask["issue"]>> = {},
+): NonNullable<FleetTask["issue"]> {
+  return {
+    id: "todo:t",
+    source: "todo",
+    title: "t",
+    status: "todo",
+    assignee: "",
+    updatedAt: "2026-06-13T00:00:00.000Z",
+    repository: "repo-a",
+    agent: "claude",
+    url: undefined,
+    ...overrides,
+  };
+}
+
+describe(canStart, () => {
+  it("requires a todo with a resolved agent and repository", () => {
+    expect(canStart(task({ id: "t", status: "todo", issue: issue() }))).toBe(true);
+    expect(canStart(task({ id: "t", status: "in-progress", issue: issue() }))).toBe(false);
+    expect(canStart(task({ id: "t", status: "todo", issue: issue({ agent: undefined }) }))).toBe(
+      false,
+    );
+    expect(
+      canStart(task({ id: "t", status: "todo", issue: issue({ repository: undefined }) })),
+    ).toBe(false);
+    expect(canStart(task({ id: "t", status: "todo" }))).toBe(false);
   });
 });

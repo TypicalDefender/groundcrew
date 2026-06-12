@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import type { FleetTask } from "@clipboard-health/groundcrew";
 
+import { DraftTaskForm } from "@/components/draftTaskForm";
 import { TaskCard } from "@/components/taskCard";
 import { TaskDrawer } from "@/components/taskDrawer";
 import { BOARD_COLUMNS, bucketTasks } from "@/lib/boardModel";
@@ -145,6 +146,7 @@ export function Board(): React.ReactElement {
             const tasks = buckets.columns[column];
             return (
               <ColumnShell key={column} title={column} count={tasks.length}>
+                {column === "Todo" ? <DraftTaskForm /> : undefined}
                 {tasks.length === 0 ? (
                   <EmptyColumn />
                 ) : (
