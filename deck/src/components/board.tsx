@@ -117,7 +117,7 @@ export function Board(): React.ReactElement {
           <h2 className="mb-2 text-sm font-bold" style={{ color: "var(--semantic-pending)" }}>
             Needs you · {buckets.needsYou.length}
           </h2>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
             {buckets.needsYou.map((task) => (
               <TaskCard key={task.id} task={task} onOpen={setOpenTask} />
             ))}

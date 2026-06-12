@@ -20,7 +20,7 @@ export function TaskCard({
       onClick={() => {
         onOpen(task);
       }}
-      className="block w-full rounded-lg border p-3 text-left transition-shadow hover:shadow-md motion-reduce:transition-none"
+      className="block w-full rounded-lg border p-3 text-left transition-shadow hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)] motion-reduce:transition-none"
       style={{ background: "var(--surface-card)", borderColor: "var(--border-base)" }}
     >
       <div className="flex items-baseline justify-between gap-2">
@@ -55,7 +55,7 @@ export function TaskCard({
         <AgentBadge agent={task.agent} color={task.agentColor} />
         {ci === undefined ? undefined : <Chip tone={ciTone(ci)}>ci {ci}</Chip>}
         {review === undefined || review === "none" ? undefined : (
-          <Chip tone={reviewTone(review)}>{review}</Chip>
+          <Chip tone={reviewTone(review)}>{review === "pending" ? "review pending" : review}</Chip>
         )}
         {task.run?.prUrl === undefined ? undefined : (
           <span className="text-xs" style={{ color: "var(--accent-link)" }}>

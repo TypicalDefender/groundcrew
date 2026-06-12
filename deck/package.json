@@ -11,7 +11,7 @@
     "start": "next start --port 4400",
     "test": "vitest run",
     "e2e": "playwright test",
-    "verify": "npm run lint && npm run test && npm run build"
+    "verify": "npm run lint && npm run test && npm run build && npm run e2e"
   },
   "dependencies": {
     "@clipboard-health/groundcrew": "file:..",

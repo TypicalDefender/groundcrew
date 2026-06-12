@@ -1,16 +1,29 @@
+import path from "node:path";
+
 import { defineConfig } from "@playwright/test";
 
 /**
- * E2E suite against a running deck. Start one first, e.g.:
- *   cd <fixture dir> && crew deck --no-build
- * or point DECK_E2E_URL elsewhere.
+ * E2E against a real deck server booted from the committed fixture in
+ * e2e/fixture (todo-txt source + seeded run states via globalSetup).
  */
+const FIXTURE_DIR = path.join(import.meta.dirname, "e2e", "fixture");
+
 export default defineConfig({
   testDir: "./e2e",
   testMatch: /.*\.e2e\.test\.ts/,
   timeout: 30_000,
+  globalSetup: "./e2e/globalSetup.ts",
   use: {
-    // oxlint-disable-next-line node/no-process-env -- standard E2E target override
-    baseURL: process.env.DECK_E2E_URL ?? "http://localhost:4400",
+    baseURL: "http://localhost:4411",
+  },
+  webServer: {
+    command: "npx next start --port 4411",
+    url: "http://localhost:4411",
+    reuseExistingServer: false,
+    cwd: import.meta.dirname,
+    env: {
+      GROUNDCREW_CONFIG: path.join(FIXTURE_DIR, "crew.config.ts"),
+      GROUNDCREW_PROJECT_CWD: FIXTURE_DIR,
+    },
   },
 });
