@@ -32,6 +32,18 @@ export {
   type JoinFleetSnapshotInput,
 } from "./lib/fleet.ts";
 export {
+  claudeProjectSlug,
+  decayByAge,
+  detectAwaitingInput,
+  PULSE_THRESHOLDS,
+  pulseDirectory,
+  readPulse,
+  type Pulse,
+  type PulseSource,
+  type PulseState,
+  type ReadPulseInput,
+} from "./lib/pulse.ts";
+export {
   listRunStates,
   readRunState,
   recordRunState,
