@@ -79,6 +79,10 @@ crew task create "Run flaky triage sweep" \
 crew task done todo:flaky-triage-1
 ```
 
+## Deck
+
+`crew deck` builds and serves the deck — the crew's web dashboard — on `deck.port` from config (default 4400). `--port <n>` overrides the port for one run, `--dev` starts the hot-reloading dev server instead, and `--no-build` serves the existing production build. The server runs until interrupted.
+
 ## Status
 
 `crew status <TASK>` prints a read-only snapshot for one task: cached title and URL when present, recorded run state, live workspace presence, the task's pulse (activity state), matching worktrees, git dirtiness, PR links for matching branches, recent log lines when present, and the task status from the configured task source.

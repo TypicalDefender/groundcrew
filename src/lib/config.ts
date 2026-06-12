@@ -285,6 +285,11 @@ export interface Config {
      */
     file?: string;
   };
+  /** Deck (web dashboard) settings. */
+  deck?: {
+    /** Port the deck server listens on. Defaults to 4400. */
+    port?: number;
+  };
 }
 
 /**
@@ -344,6 +349,9 @@ export interface ResolvedConfig {
   };
   logging: {
     file: string;
+  };
+  deck: {
+    port: number;
   };
 }
 
@@ -1055,7 +1063,22 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
         normalizeOptionalString(user.logging?.file, "logging.file") ?? defaultLogFile(),
       ),
     },
+    deck: {
+      port: normalizeDeckPort(user.deck?.port),
+    },
   };
+}
+
+const DEFAULT_DECK_PORT = 4400;
+
+function normalizeDeckPort(port: unknown): number {
+  if (port === undefined) {
+    return DEFAULT_DECK_PORT;
+  }
+  if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65_535) {
+    fail(`deck.port must be an integer between 1 and 65535, got ${JSON.stringify(port)}`);
+  }
+  return port;
 }
 
 function validatePromptPlaceholders(template: string): void {

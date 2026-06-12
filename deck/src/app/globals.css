@@ -1,0 +1,82 @@
+@import "tailwindcss";
+
+/*
+ * Deck design tokens as CSS custom properties. `src/lib/theme.ts` mirrors
+ * these for TypeScript consumers; keep the two in sync.
+ */
+:root {
+  --surface-page: #f7f7f7;
+  --surface-card: #ffffff;
+  --surface-muted: rgba(0, 0, 0, 0.05);
+
+  --nav-gradient: linear-gradient(90deg, #001529 0%, #00101f 79%);
+  --nav-item-text: #f7f7f799;
+  --nav-item-selected-text: #ffffff;
+  --nav-item-selected-fill: #ffffff0d;
+  --nav-section-title: #f7f7f766;
+  --nav-divider: #f7f7f71a;
+
+  --text-strong: #17181e;
+  --text-base: #282932;
+  --text-muted: rgba(0, 0, 0, 0.6);
+  --text-inactive: rgba(0, 0, 0, 0.35);
+  --text-inverted: #ffffffe6;
+
+  --accent-primary: #1890ff;
+  --accent-primary-hover: #329dff;
+  --accent-link: #146bf8;
+  --accent-link-hover: #065be5;
+  --accent-secondary: #26222b;
+  --accent-secondary-hover: #46404d;
+
+  --semantic-danger: #dd1717;
+  --semantic-danger-hover: #b31414;
+  --semantic-warning: #ce7210;
+  --semantic-pending: #ef6c00;
+  --semantic-success: #2fb690;
+  --semantic-negative: #f06868;
+  --semantic-neutral: #d9d9d9;
+
+  --border-base: #0000001a;
+  --border-muted: #0000000d;
+  --border-strong: #00000026;
+  --border-primary-tint: #1890ff33;
+  --border-error-tint: #dd171733;
+
+  --pulse-active: #2fb690;
+  --pulse-ready: #4a9bff;
+  --pulse-idle: #d9d9d9;
+  --pulse-awaiting-input: #fab958;
+  --pulse-blocked: #ff5a5a;
+  --pulse-gone: rgba(0, 0, 0, 0.35);
+
+  --font-ui: var(--font-lato), system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+body {
+  background: var(--surface-page);
+  color: var(--text-base);
+  font-family: var(--font-ui);
+}
+
+/* The active pulse dot breathes; stand still for reduced-motion users. */
+@keyframes pulse-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(47, 182, 144, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(47, 182, 144, 0);
+  }
+}
+
+.pulse-dot-active {
+  animation: pulse-breathe 2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse-dot-active {
+    animation: none;
+  }
+}

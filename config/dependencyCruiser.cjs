@@ -13,6 +13,9 @@ module.exports = {
       from: {
         orphan: true,
         pathNot: [
+          // Types-only module: every import of it is erased at compile time
+          // (tsPreCompilationDeps is false), so the cruiser sees an orphan.
+          String.raw`src/lib/adapterDefinition\.ts$`,
           String.raw`/bin/.*\.js$`,
           String.raw`\.test\.ts$`,
           String.raw`\.spec\.ts$`,

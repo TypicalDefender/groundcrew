@@ -8,6 +8,7 @@ import { orchestrate } from "./commands/orchestrator.ts";
 import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
 import { sourceCli } from "./commands/source.ts";
+import { deckCli } from "./commands/deck.ts";
 import { statusCli } from "./commands/status.ts";
 import { taskCli } from "./commands/task.ts";
 import { createDefaultUpgradeCliOptions, upgradeCli } from "./commands/upgrade.ts";
@@ -190,6 +191,11 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     summary: "Print read-only groundcrew state, or one task's local/Linear status",
     usage: "[<task>]",
     invoke: statusCli,
+  },
+  deck: {
+    summary: "Build and serve the deck (web dashboard)",
+    usage: "[--port <n>] [--dev] [--no-build]",
+    invoke: deckCli,
   },
   cleanup: {
     summary: "Tear down a worktree",

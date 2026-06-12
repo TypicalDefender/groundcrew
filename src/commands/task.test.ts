@@ -83,6 +83,7 @@ function makeConfig(): ResolvedConfig {
     prompts: { initial: "x" },
     workspaceKind: "auto",
     local: { runner: "auto" },
+    deck: { port: 4400 },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
