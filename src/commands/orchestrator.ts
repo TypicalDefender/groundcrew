@@ -15,12 +15,13 @@ import {
   RepositoryResolutionError,
   TaskSourceOutputError,
 } from "../lib/taskSource.ts";
+import { nextTickDelay } from "../lib/tickDelay.ts";
 import { getUsageByAgent, type UsageByAgent } from "../lib/usage.ts";
 import { errorMessage, log, sleep, writeOutput } from "../lib/util.ts";
 import { worktrees } from "../lib/worktrees.ts";
 import { type Cleaner, createCleaner } from "./cleaner.ts";
 import { createDispatcher, type Dispatcher } from "./dispatcher.ts";
-import { recordTaskPullRequest } from "../lib/runState.ts";
+import { listRunStates, recordTaskPullRequest } from "../lib/runState.ts";
 import { createReviewer, type Reviewer } from "./reviewer.ts";
 
 const RATE_LIMIT_DELAY_MS = 60_000;
@@ -257,8 +258,18 @@ async function runWatchLoop(
       if (shutdown.signal.aborted) {
         break;
       }
+      // Adaptive pacing: fast while any agent is actively producing output,
+      // slow inside quiet hours, base interval otherwise.
+      const delay = nextTickDelay(
+        new Date(),
+        { runStates: listRunStates(config), paused: readPause({ config }) !== undefined },
+        config,
+      );
+      if (delay !== config.orchestrator.pollIntervalMilliseconds) {
+        log(`Adaptive poll: next tick in ${delay / MS_PER_SECOND}s`);
+      }
       // oxlint-disable-next-line no-await-in-loop -- watch loop is intentionally serial
-      await sleep(config.orchestrator.pollIntervalMilliseconds, shutdown.signal);
+      await sleep(delay, shutdown.signal);
     }
   } finally {
     if (forceExitTimer !== undefined) {

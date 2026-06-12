@@ -11,6 +11,7 @@ import path from "node:path";
 import type * as configModule from "../lib/config.ts";
 import { loadConfigWithSource, type ResolvedConfig } from "../lib/config.ts";
 import { clearPause, recordPause } from "../lib/pause.ts";
+import { recordRunState, recordTaskPulse } from "../lib/runState.ts";
 import { getUsageByAgent } from "../lib/usage.ts";
 import type * as utilModule from "../lib/util.ts";
 import { sleep } from "../lib/util.ts";
@@ -86,12 +87,12 @@ function makeConfig(stateRoot: string): ResolvedConfig {
  * Sleep stub for watch mode: runs `between` after the first post-tick
  * sleep, then ends the loop via the orchestrator's own SIGINT handler.
  */
-function watchTwoTicks(between: () => void): () => Promise<void> {
+function watchTwoTicks(between?: () => void): () => Promise<void> {
   let sleeps = 0;
   return async () => {
     sleeps += 1;
     if (sleeps === 1) {
-      between();
+      between?.();
       return;
     }
     process.listeners("SIGINT").at(-1)?.("SIGINT");
@@ -140,6 +141,36 @@ describe("orchestrator pause gating", () => {
       "Paused until 2099-01-01T00:00:00.000Z (lunch); skipping dispatch/review/clean",
     );
     expect(setupMock).not.toHaveBeenCalled();
+  });
+
+  it("fast-ticks while any task pulse is active, on the real run states", async () => {
+    config = {
+      ...config,
+      orchestrator: { ...config.orchestrator, activePollIntervalMilliseconds: 250 },
+    };
+    loadConfigMock.mockResolvedValue({
+      config,
+      source: { kind: "xdg", filepath: "/tmp/crew.config.ts" },
+    });
+    recordRunState({
+      config,
+      state: {
+        task: "t-9",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: path.join(stateRoot, "project", "repo-a-t-9"),
+        branchName: "dev-t-9",
+        workspaceName: "t-9",
+        state: "running",
+      },
+    });
+    recordTaskPulse({ config, task: "t-9", pulse: "active" });
+    sleepMock.mockImplementation(watchTwoTicks());
+
+    await orchestrate({ watch: true, dryRun: false });
+
+    expect(sleepMock).toHaveBeenCalledWith(250, expect.anything());
+    expect(consoleLog.output()).toContain("Adaptive poll: next tick in 0.25s");
   });
 
   it("resumes dispatch on the tick after the pause lifts", async () => {

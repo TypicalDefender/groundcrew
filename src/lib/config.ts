@@ -35,6 +35,15 @@ export interface HookCommands {
  */
 export const AGENT_ANY = "any";
 
+/** Slow-poll window in local "HH:MM" times; may wrap past midnight. */
+export interface QuietHoursConfig {
+  /** Inclusive window start, 24-hour "HH:MM". */
+  start: string;
+  /** Exclusive window end, 24-hour "HH:MM". */
+  end: string;
+  pollIntervalMilliseconds: number;
+}
+
 /**
  * Which terminal session manager hosts the agent process:
  *
@@ -241,6 +250,14 @@ export interface Config {
     maximumInProgress?: number;
     pollIntervalMilliseconds?: number;
     sessionLimitPercentage?: number;
+    /** Faster watch-loop interval used while any task pulse is `active`. */
+    activePollIntervalMilliseconds?: number;
+    /**
+     * Slow-poll window in local time, e.g.
+     * `{ start: "23:00", end: "07:00", pollIntervalMilliseconds: 900000 }`.
+     * The window may wrap past midnight; start is inclusive, end exclusive.
+     */
+    quietHours?: QuietHoursConfig;
   };
   agents?: {
     default?: string;
@@ -328,6 +345,8 @@ export interface ResolvedConfig {
     maximumInProgress: number;
     pollIntervalMilliseconds: number;
     sessionLimitPercentage: number;
+    activePollIntervalMilliseconds?: number;
+    quietHours?: QuietHoursConfig;
   };
   agents: {
     default: string;
@@ -1049,7 +1068,7 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
     },
     workspace: normalizeWorkspace(user.workspace),
     defaults: normalizeDefaults((user as { defaults?: unknown }).defaults),
-    orchestrator: { ...DEFAULT_ORCHESTRATOR, ...user.orchestrator },
+    orchestrator: normalizeOrchestrator(user.orchestrator),
     agents: {
       default: user.agents?.default ?? "claude",
       definitions: mergeDefinitions(user.agents?.definitions),
@@ -1070,6 +1089,73 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
       port: normalizeDeckPort(user.deck?.port),
       pollIntervalMilliseconds: normalizeDeckPollInterval(user.deck?.pollIntervalMilliseconds),
     },
+  };
+}
+
+const MINIMUM_ORCHESTRATOR_POLL_INTERVAL_MILLISECONDS = 250;
+const QUIET_HOURS_TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+
+function normalizeAdaptiveInterval(value: unknown, label: string): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < MINIMUM_ORCHESTRATOR_POLL_INTERVAL_MILLISECONDS
+  ) {
+    fail(
+      `${label} must be an integer ≥ ${MINIMUM_ORCHESTRATOR_POLL_INTERVAL_MILLISECONDS}, got ${JSON.stringify(value)}`,
+    );
+  }
+  return value;
+}
+
+function quietHoursTime(record: Record<string, unknown>, key: "start" | "end"): string {
+  const value = record[key];
+  if (typeof value !== "string" || !QUIET_HOURS_TIME_PATTERN.test(value)) {
+    fail(
+      `orchestrator.quietHours.${key} must be a 24-hour "HH:MM" time, got ${JSON.stringify(value)}`,
+    );
+  }
+  return value;
+}
+
+function normalizeQuietHours(raw: unknown): QuietHoursConfig | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    fail(
+      `orchestrator.quietHours must be an object like { start: "23:00", end: "07:00", pollIntervalMilliseconds: 900000 }, got ${JSON.stringify(raw)}`,
+    );
+  }
+  const record: Record<string, unknown> = { ...raw };
+  return {
+    start: quietHoursTime(record, "start"),
+    end: quietHoursTime(record, "end"),
+    pollIntervalMilliseconds: normalizeAdaptiveInterval(
+      record["pollIntervalMilliseconds"],
+      "orchestrator.quietHours.pollIntervalMilliseconds",
+    ),
+  };
+}
+
+function normalizeOrchestrator(user: Config["orchestrator"]): ResolvedConfig["orchestrator"] {
+  const active = user?.activePollIntervalMilliseconds;
+  const quietHours = normalizeQuietHours(user?.quietHours);
+  return {
+    maximumInProgress: user?.maximumInProgress ?? DEFAULT_ORCHESTRATOR.maximumInProgress,
+    pollIntervalMilliseconds:
+      user?.pollIntervalMilliseconds ?? DEFAULT_ORCHESTRATOR.pollIntervalMilliseconds,
+    sessionLimitPercentage:
+      user?.sessionLimitPercentage ?? DEFAULT_ORCHESTRATOR.sessionLimitPercentage,
+    ...(active === undefined
+      ? {}
+      : {
+          activePollIntervalMilliseconds: normalizeAdaptiveInterval(
+            active,
+            "orchestrator.activePollIntervalMilliseconds",
+          ),
+        }),
+    ...(quietHours === undefined ? {} : { quietHours }),
   };
 }
 
