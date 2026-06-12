@@ -18,6 +18,14 @@ export {
   type FollowUpAction,
 } from "./commands/autopilot.ts";
 export { recordTaskAutopilot, type RecordTaskAutopilotInput } from "./lib/runState.ts";
+export {
+  buildCiFailureNudge,
+  excerptLastLines,
+  fetchFailingRunLog,
+  formatCiFailureNudge,
+  type CiCommandRunner,
+  type FailingRunLog,
+} from "./lib/ciLogs.ts";
 export { resumeWorkspace, type ResumeWorkspaceOptions } from "./commands/resumeWorkspace.ts";
 export {
   setupWorkspace,

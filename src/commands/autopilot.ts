@@ -18,6 +18,7 @@ import {
   type MergePullRequestResult,
   type PullRequestSummary,
 } from "../lib/pullRequests.ts";
+import { buildCiFailureNudge } from "../lib/ciLogs.ts";
 import { recordTaskAutopilot, type RunState } from "../lib/runState.ts";
 import { errorMessage, log } from "../lib/util.ts";
 import { workspaces, type WorkspaceSendResult } from "../lib/workspaces.ts";
@@ -31,6 +32,8 @@ export type FollowUpAction =
       task: string;
       prUrl: string;
       workspaceName: string;
+      worktreeDir: string;
+      branchName: string;
       attempt: number;
     }
   | { kind: "nudge-review-comments"; task: string; prUrl: string; workspaceName: string }
@@ -83,6 +86,8 @@ function decideCiNudge(state: RunState, autopilot: AutopilotConfig): FollowUpAct
       task: state.task,
       prUrl: state.prUrl,
       workspaceName: state.workspaceName,
+      worktreeDir: state.worktreeDir,
+      branchName: state.branchName,
       attempt: (state.ciNudgeAttempts ?? 0) + 1,
     };
   }
@@ -222,19 +227,16 @@ export interface AutopilotDeps {
     pullRequest: PullRequestSummary;
     signal?: AbortSignal;
   }) => Promise<MergePullRequestResult>;
-  /** Nudge body for a failing PR; 6.3 swaps in a CI log excerpt. */
-  buildCiFailureNudge: (action: Extract<FollowUpAction, { kind: "nudge-ci-failure" }>) => string;
+  /** Nudge body for a failing PR; the default folds in a CI log excerpt. */
+  buildCiFailureNudge: (
+    action: Extract<FollowUpAction, { kind: "nudge-ci-failure" }>,
+    signal?: AbortSignal,
+  ) => string | Promise<string>;
   /** Nudge body for requested changes; 6.4 swaps in the real comments. */
-  buildReviewNudge: (action: Extract<FollowUpAction, { kind: "nudge-review-comments" }>) => string;
-}
-
-function defaultCiFailureNudge(
-  action: Extract<FollowUpAction, { kind: "nudge-ci-failure" }>,
-): string {
-  return [
-    `CI is failing on your pull request (${action.prUrl}).`,
-    "Please look at the failing checks, fix the problems, and push an update.",
-  ].join(" ");
+  buildReviewNudge: (
+    action: Extract<FollowUpAction, { kind: "nudge-review-comments" }>,
+    signal?: AbortSignal,
+  ) => string | Promise<string>;
 }
 
 function defaultReviewNudge(
@@ -250,7 +252,13 @@ export const DEFAULT_AUTOPILOT_DEPS: AutopilotDeps = {
   sendText: workspaces.sendText,
   findPullRequests: findPullRequestsForBranch,
   merge: mergePullRequest,
-  buildCiFailureNudge: defaultCiFailureNudge,
+  buildCiFailureNudge: async (action, signal) =>
+    await buildCiFailureNudge({
+      prUrl: action.prUrl,
+      worktreeDir: action.worktreeDir,
+      branchName: action.branchName,
+      ...(signal === undefined ? {} : { signal }),
+    }),
   buildReviewNudge: defaultReviewNudge,
 };
 
@@ -306,7 +314,7 @@ export function createAutopilot(
     }
     if (action.kind === "nudge-ci-failure") {
       log(`Autopilot: nudging ${action.task} about failing CI (attempt ${action.attempt})`);
-      if (await executeNudge(action, deps.buildCiFailureNudge(action), signal)) {
+      if (await executeNudge(action, await deps.buildCiFailureNudge(action, signal), signal)) {
         recordTaskAutopilot({
           config,
           task: action.task,
@@ -317,7 +325,7 @@ export function createAutopilot(
     }
     if (action.kind === "nudge-review-comments") {
       log(`Autopilot: nudging ${action.task} about requested review changes`);
-      if (await executeNudge(action, deps.buildReviewNudge(action), signal)) {
+      if (await executeNudge(action, await deps.buildReviewNudge(action, signal), signal)) {
         recordTaskAutopilot({
           config,
           task: action.task,

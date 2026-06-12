@@ -482,24 +482,43 @@ describe(createAutopilot, () => {
     );
   });
 
-  it("ships readable default nudge bodies for the 6.3/6.4 seams", () => {
-    expect(
-      DEFAULT_AUTOPILOT_DEPS.buildCiFailureNudge({
-        kind: "nudge-ci-failure",
-        task: "team-1",
-        prUrl: "https://github.com/acme/repo-a/pull/7",
-        workspaceName: "team-1",
-        attempt: 1,
-      }),
-    ).toContain("CI is failing on your pull request (https://github.com/acme/repo-a/pull/7)");
-    expect(
-      DEFAULT_AUTOPILOT_DEPS.buildReviewNudge({
-        kind: "nudge-review-comments",
-        task: "team-1",
-        prUrl: "https://github.com/acme/repo-a/pull/7",
-        workspaceName: "team-1",
-      }),
-    ).toContain("review comments requesting changes");
+  it("ships readable default nudge bodies that degrade without CI logs", async () => {
+    // stateRoot is a plain temp dir — gh fails fast there, so the default
+    // CI builder exercises its no-logs fallback for real.
+    await expect(
+      DEFAULT_AUTOPILOT_DEPS.buildCiFailureNudge(
+        {
+          kind: "nudge-ci-failure",
+          task: "team-1",
+          prUrl: "https://github.com/acme/repo-a/pull/7",
+          workspaceName: "team-1",
+          worktreeDir: stateRoot,
+          branchName: "dev-team-1",
+          attempt: 1,
+        },
+        new AbortController().signal,
+      ),
+    ).resolves.toContain(
+      "CI is failing on your pull request (https://github.com/acme/repo-a/pull/7)",
+    );
+    // And once without a signal, exercising the other option branch.
+    const unsignaled = await DEFAULT_AUTOPILOT_DEPS.buildCiFailureNudge({
+      kind: "nudge-ci-failure",
+      task: "team-1",
+      prUrl: "https://github.com/acme/repo-a/pull/7",
+      workspaceName: "team-1",
+      worktreeDir: stateRoot,
+      branchName: "dev-team-1",
+      attempt: 1,
+    });
+    expect(unsignaled).toContain("CI is failing");
+    const review = await DEFAULT_AUTOPILOT_DEPS.buildReviewNudge({
+      kind: "nudge-review-comments",
+      task: "team-1",
+      prUrl: "https://github.com/acme/repo-a/pull/7",
+      workspaceName: "team-1",
+    });
+    expect(review).toContain("review comments requesting changes");
   });
 
   it("reports a refused merge and ignores bookkeeping for unknown tasks", async () => {
