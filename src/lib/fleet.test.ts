@@ -11,6 +11,7 @@ import {
   joinFleetSnapshot,
   type JoinFleetSnapshotInput,
 } from "./fleet.ts";
+import { recordPause } from "./pause.ts";
 import { recordRunState, type RunState } from "./runState.ts";
 import { canonicalLinearIssue, canonicalShellIssue } from "./testing/canonicalFixtures.ts";
 import type { Issue, TaskSource } from "./taskSource.ts";
@@ -114,6 +115,14 @@ function fakeSource(issues: readonly Issue[]): TaskSource {
 }
 
 describe(joinFleetSnapshot, () => {
+  it("carries an active crew pause through the join", () => {
+    const pause = { pausedAt: "2026-06-13T08:00:00.000Z", reason: "lunch" };
+
+    const actual = joinFleetSnapshot(joinInput({ pause }));
+
+    expect(actual.pause).toStrictEqual(pause);
+  });
+
   it("joins a board issue with its run state, worktree, and live workspace", () => {
     const issue = canonicalLinearIssue({
       naturalId: "team-1",
@@ -458,6 +467,15 @@ describe(collectFleetSnapshot, () => {
       run: { task: "team-1", state: "running" },
     });
     expect(Date.parse(actual.timestamp)).not.toBeNaN();
+  });
+
+  it("carries an active crew pause into the collected snapshot", async () => {
+    buildSourcesMock.mockResolvedValue([fakeSource([])]);
+    recordPause({ config, reason: "lunch" });
+
+    const actual = await collectFleetSnapshot({ config });
+
+    expect(actual.pause).toMatchObject({ reason: "lunch" });
   });
 
   it("degrades to an unavailable board when source construction fails", async () => {

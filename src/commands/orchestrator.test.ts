@@ -6,6 +6,7 @@ import type { LinearClient } from "@linear/sdk";
 
 import type * as configModule from "../lib/config.ts";
 import { loadConfigWithSource, type ResolvedConfig } from "../lib/config.ts";
+import type { readPause } from "../lib/pause.ts";
 import { findPullRequestsForBranch } from "../lib/pullRequests.ts";
 import { getUsageByAgent } from "../lib/usage.ts";
 import type * as utilModule from "../lib/util.ts";
@@ -71,6 +72,14 @@ vi.mock(import("../lib/usage.ts"), async (importOriginal) => {
 vi.mock(import("../lib/pullRequests.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, findPullRequestsForBranch: vi.fn<typeof findPullRequestsForBranch>() };
+});
+// Mocked to a constant "awake" so every tick here is hermetic: makeConfig
+// points logging at shared /tmp, where a stray real pause file could
+// otherwise gate all of these tests. Gating itself is covered in
+// orchestratorPause.test.ts against real pause files.
+vi.mock(import("../lib/pause.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, readPause: vi.fn<typeof readPause>() };
 });
 vi.mock(import("./setupWorkspace.ts"), async (importOriginal) => {
   const actual = await importOriginal();

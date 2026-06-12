@@ -8,6 +8,7 @@
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { loadConfigWithSource, type ResolvedConfig } from "../lib/config.ts";
+import { type PauseState, readPause } from "../lib/pause.ts";
 import { findPullRequestsForBranch } from "../lib/pullRequests.ts";
 import {
   type BoardState,
@@ -77,6 +78,17 @@ export interface OrchestratorOptions {
   dryRun: boolean;
 }
 
+/**
+ * One log line per paused tick: dispatch/review/clean are skipped, the
+ * deck stays live through its own snapshot collector, and an expiring
+ * pause auto-wakes because `readPause` deletes the file at expiry.
+ */
+function pausedTickMessage(pause: PauseState, idleSuffix: string | undefined): string {
+  const expiry = pause.until === undefined ? "until `crew wake`" : `until ${pause.until}`;
+  const reason = pause.reason === undefined ? "" : ` (${pause.reason})`;
+  return `Paused ${expiry}${reason}; skipping dispatch/review/clean${idleSuffix ?? ""}`;
+}
+
 async function fetchUsageOrEmpty(
   config: ResolvedConfig,
   signal?: AbortSignal,
@@ -142,6 +154,11 @@ export async function orchestrate(options: OrchestratorOptions): Promise<void> {
     : undefined;
 
   const tick = async (signal?: AbortSignal): Promise<void> => {
+    const pause = readPause({ config });
+    if (pause !== undefined) {
+      log(pausedTickMessage(pause, idleSuffix));
+      return;
+    }
     const state: BoardState = await withRetry(async () => await board.fetch(), signal);
 
     const worktreeEntries = worktrees.list(config);

@@ -5,6 +5,7 @@ import { doctor } from "./commands/doctor.ts";
 import { initConfigCli } from "./commands/init.ts";
 import { interruptWorkspaceCli } from "./commands/interruptWorkspace.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
+import { pauseCli, wakeCli } from "./commands/pause.ts";
 import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
 import { sourceCli } from "./commands/source.ts";
@@ -201,6 +202,16 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     summary: "Tear down a worktree",
     usage: "[--force] <task>",
     invoke: cleanupWorkspaceCli,
+  },
+  pause: {
+    summary: "Pause the crew: the watch loop skips dispatch/review/clean until wake or expiry",
+    usage: "[--for <duration>] [--reason <text>]",
+    invoke: pauseCli,
+  },
+  wake: {
+    summary: "Wake a paused crew so the next tick resumes dispatch",
+    usage: "",
+    invoke: wakeCli,
   },
   stop: {
     summary: "Stop a live task workspace while preserving its worktree",

@@ -6,6 +6,7 @@ import type { FleetTask } from "@clipboard-health/groundcrew";
 
 import type { ActionOutcome } from "@/components/actionBar";
 import { DraftTaskForm } from "@/components/draftTaskForm";
+import { PauseControl } from "@/components/pauseControl";
 import { TaskCard } from "@/components/taskCard";
 import { TaskDrawer } from "@/components/taskDrawer";
 import { BOARD_COLUMNS, bucketTasks } from "@/lib/boardModel";
@@ -112,6 +113,8 @@ export function Board(): React.ReactElement {
 
   return (
     <div className="space-y-5">
+      <PauseControl pause={snapshot.pause} onOutcome={pushToast} />
+
       {degraded ? (
         <p
           className="rounded border px-3 py-2 text-sm"

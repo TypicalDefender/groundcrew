@@ -23,6 +23,8 @@ export type {
 } from "./lib/config.ts";
 export { loadConfig } from "./lib/config.ts";
 export { isPlainTaskId } from "./lib/taskId.ts";
+export { clearPause, pausePath, readPause, recordPause, type PauseState } from "./lib/pause.ts";
+export { parseDurationMilliseconds } from "./commands/pause.ts";
 export { workspaces, type WorkspaceSendResult } from "./lib/workspaces.ts";
 export {
   collectFleetSnapshot,

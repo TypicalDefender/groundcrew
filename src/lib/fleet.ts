@@ -14,6 +14,7 @@
 import { createBoard } from "./board.ts";
 import { buildSources, sourcesFromConfig } from "./buildSources.ts";
 import type { ResolvedConfig } from "./config.ts";
+import { type PauseState, readPause } from "./pause.ts";
 import { listRunStates, type RunState } from "./runState.ts";
 import { type CanonicalStatus, type Issue, naturalIdFromCanonical } from "./taskSource.ts";
 import { errorMessage } from "./util.ts";
@@ -82,6 +83,8 @@ export interface FleetSnapshot {
   straySessions: readonly string[];
   board: FleetFeedHealth;
   workspaces: FleetFeedHealth;
+  /** Crew-level pause, when one is active. */
+  pause?: PauseState;
 }
 
 export type FleetBoardFeed =
@@ -101,12 +104,14 @@ export async function collectFleetSnapshot(
     fetchBoardFeed(config),
     workspaces.probe(config, signal),
   ]);
+  const pause = readPause({ config });
   return joinFleetSnapshot({
     timestamp: new Date().toISOString(),
     board,
     runStates: listRunStates(config),
     worktreeEntries: worktrees.list(config),
     probe,
+    ...(pause === undefined ? {} : { pause }),
     agentColors: Object.fromEntries(
       Object.entries(config.agents.definitions).map(([name, definition]) => [
         name,
@@ -124,6 +129,8 @@ export interface JoinFleetSnapshotInput {
   probe: WorkspaceProbe;
   /** Agent name → badge color, from the crew config's agent definitions. */
   agentColors?: Readonly<Record<string, string>>;
+  /** Crew-level pause, when one is active. */
+  pause?: PauseState;
 }
 
 /**
@@ -182,6 +189,7 @@ export function joinFleetSnapshot(input: JoinFleetSnapshotInput): FleetSnapshot 
     straySessions: straySessionNames(probe, sessionOwners),
     board: board.kind === "ok" ? { kind: "ok" } : { kind: "unavailable", reason: board.reason },
     workspaces: probeHealth(probe),
+    ...(input.pause === undefined ? {} : { pause: input.pause }),
   };
 }
 
