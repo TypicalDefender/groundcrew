@@ -7,7 +7,13 @@ import {
   setEnvironmentVariable,
   snapshotEnvironmentVariables,
 } from "../testHelpers/env.ts";
-import type { Config, LoadedConfig, QuietHoursConfig, ResolvedConfig } from "./config.ts";
+import type {
+  AutopilotUserConfig,
+  Config,
+  LoadedConfig,
+  QuietHoursConfig,
+  ResolvedConfig,
+} from "./config.ts";
 
 interface ConfigModule {
   loadConfig: () => Promise<Readonly<ResolvedConfig>>;
@@ -275,6 +281,101 @@ describe("loadConfig prompts.promptFile", () => {
     const { loadConfig } = await loadFreshConfig();
 
     await expect(loadConfig()).rejects.toThrow(/unknown placeholder "\{\{unknownPlaceholder\}\}"/);
+  });
+
+  it("defaults autopilot to stuck-only and resolves user overrides", async () => {
+    const bare = writeConfigFile(
+      temporary,
+      validConfigSource({ workspace: VALID_WORKSPACE(temporary) }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", bare);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).resolves.toMatchObject({
+      autopilot: {
+        ciFailure: { enabled: false, maxAttempts: 2 },
+        reviewComments: { enabled: false },
+        autoMerge: { enabled: false },
+        stuck: { enabled: true, thresholdMinutes: 10 },
+      },
+    });
+
+    const partial = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        autopilot: { ciFailure: { enabled: true }, autoMerge: { enabled: true } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", partial);
+    const partialLoad = await loadFreshConfig();
+    await expect(partialLoad.loadConfig()).resolves.toMatchObject({
+      autopilot: {
+        ciFailure: { enabled: true, maxAttempts: 2 },
+        reviewComments: { enabled: false },
+        autoMerge: { enabled: true },
+        stuck: { enabled: true, thresholdMinutes: 10 },
+      },
+    });
+
+    const tuned = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        autopilot: {
+          ciFailure: { enabled: true, maxAttempts: 3 },
+          reviewComments: { enabled: true },
+          stuck: { enabled: false, thresholdMinutes: 30 },
+        },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", tuned);
+    const fresh = await loadFreshConfig();
+    await expect(fresh.loadConfig()).resolves.toMatchObject({
+      autopilot: {
+        ciFailure: { enabled: true, maxAttempts: 3 },
+        reviewComments: { enabled: true },
+        autoMerge: { enabled: false },
+        stuck: { enabled: false, thresholdMinutes: 30 },
+      },
+    });
+  });
+
+  it("rejects malformed autopilot sections with field-specific messages", async () => {
+    await expectConfigRejection(
+      temporary,
+      {
+        workspace: VALID_WORKSPACE(temporary),
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- exercising the runtime shape guard
+        autopilot: "on" as unknown as AutopilotUserConfig,
+      },
+      /autopilot must be an object, got "on"/,
+    );
+    await expectConfigRejection(
+      temporary,
+      {
+        workspace: VALID_WORKSPACE(temporary),
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- exercising the runtime shape guard
+        autopilot: { autoMerge: true } as unknown as AutopilotUserConfig,
+      },
+      /autopilot\.autoMerge must be an object with an `enabled` boolean/,
+    );
+    await expectConfigRejection(
+      temporary,
+      {
+        workspace: VALID_WORKSPACE(temporary),
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- exercising the runtime shape guard
+        autopilot: { stuck: { enabled: "yes" } } as unknown as AutopilotUserConfig,
+      },
+      /autopilot\.stuck\.enabled must be a boolean, got "yes"/,
+    );
+    await expectConfigRejection(
+      temporary,
+      {
+        workspace: VALID_WORKSPACE(temporary),
+        autopilot: { ciFailure: { enabled: true, maxAttempts: 0 } },
+      },
+      /autopilot\.ciFailure\.maxAttempts must be an integer ≥ 1, got 0/,
+    );
   });
 
   // Orchestrator pacing + keep-awake config validation lives here for the

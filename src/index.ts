@@ -14,14 +14,17 @@ export {
 } from "./commands/setupWorkspace.ts";
 export { status, type StatusOptions } from "./commands/status.ts";
 export type {
+  AutopilotConfig,
+  AutopilotUserConfig,
   Config,
   HookCommands,
   AgentDefinition,
   KnownRepository,
+  QuietHoursConfig,
   ResolvedConfig,
   SourceConfig,
 } from "./lib/config.ts";
-export { loadConfig } from "./lib/config.ts";
+export { DEFAULT_AUTOPILOT, loadConfig } from "./lib/config.ts";
 export { isPlainTaskId } from "./lib/taskId.ts";
 export { clearPause, pausePath, readPause, recordPause, type PauseState } from "./lib/pause.ts";
 export { isWithinQuietHours, nextTickDelay, type FleetPacingSignals } from "./lib/tickDelay.ts";

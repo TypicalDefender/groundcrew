@@ -35,6 +35,29 @@ export interface HookCommands {
  */
 export const AGENT_ANY = "any";
 
+/**
+ * Automatic follow-ups, evaluated each watch tick after the reviewer.
+ * Everything defaults off except stuck detection, which is notify-only.
+ */
+export interface AutopilotConfig {
+  /** Nudge the agent with a CI log excerpt when its PR's checks fail. */
+  ciFailure: { enabled: boolean; maxAttempts: number };
+  /** Nudge the agent with unresolved review comments. */
+  reviewComments: { enabled: boolean };
+  /** Merge PRs that are approved with passing CI. */
+  autoMerge: { enabled: boolean };
+  /** Flag tasks whose pulse has not changed for the threshold. */
+  stuck: { enabled: boolean; thresholdMinutes: number };
+}
+
+/** User-facing shape: every section and field optional. */
+export interface AutopilotUserConfig {
+  ciFailure?: { enabled: boolean; maxAttempts?: number };
+  reviewComments?: { enabled: boolean };
+  autoMerge?: { enabled: boolean };
+  stuck?: { enabled: boolean; thresholdMinutes?: number };
+}
+
 /** Slow-poll window in local "HH:MM" times; may wrap past midnight. */
 export interface QuietHoursConfig {
   /** Inclusive window start, 24-hour "HH:MM". */
@@ -298,6 +321,8 @@ export interface Config {
      */
     preventSleep?: boolean;
   };
+  /** Automatic follow-ups; see `AutopilotConfig` for the resolved shape. */
+  autopilot?: AutopilotUserConfig;
   logging?: {
     /**
      * Append-mode log file destination. `log()` and `logEvent()` tee here
@@ -378,6 +403,12 @@ export interface ResolvedConfig {
      */
     preventSleep?: boolean;
   };
+  /**
+   * Automatic follow-ups. Optional so test fixtures stay terse;
+   * `loadConfig` always writes it. Consumers fall back to
+   * `DEFAULT_AUTOPILOT` when absent.
+   */
+  autopilot?: AutopilotConfig;
   logging: {
     file: string;
   };
@@ -1063,6 +1094,7 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
   // Validated up front so a malformed `local` block fails with its own
   // message rather than whatever later normalization trips over first.
   const local = normalizeLocal((user as { local?: unknown }).local);
+  const autopilot = normalizeAutopilot((user as { autopilot?: unknown }).autopilot);
 
   const sources = normalizeSources((user as { sources?: unknown }).sources);
   const branchPrefix = normalizeBranchPrefix(user.git?.branchPrefix);
@@ -1087,6 +1119,7 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
     },
     workspaceKind: normalizeWorkspaceKind(user.workspaceKind, "workspaceKind") ?? "auto",
     local,
+    autopilot,
     logging: {
       file: expandHome(
         normalizeOptionalString(user.logging?.file, "logging.file") ?? defaultLogFile(),
@@ -1142,6 +1175,87 @@ function normalizeQuietHours(raw: unknown): QuietHoursConfig | undefined {
       record["pollIntervalMilliseconds"],
       "orchestrator.quietHours.pollIntervalMilliseconds",
     ),
+  };
+}
+
+/** Everything off except stuck detection, which only notifies. */
+export const DEFAULT_AUTOPILOT: AutopilotConfig = {
+  ciFailure: { enabled: false, maxAttempts: 2 },
+  reviewComments: { enabled: false },
+  autoMerge: { enabled: false },
+  stuck: { enabled: true, thresholdMinutes: 10 },
+};
+
+function autopilotEnabled(record: Record<string, unknown>, label: string): boolean {
+  const { enabled } = record;
+  if (typeof enabled !== "boolean") {
+    fail(`${label}.enabled must be a boolean, got ${JSON.stringify(enabled)}`);
+  }
+  return enabled;
+}
+
+function autopilotPositiveInteger(value: unknown, label: string, fallback: number): number {
+  if (value === undefined) {
+    return fallback;
+  }
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+    fail(`${label} must be an integer ≥ 1, got ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
+function autopilotSection(raw: unknown, label: string): Record<string, unknown> | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (!isPlainObject(raw)) {
+    fail(`${label} must be an object with an \`enabled\` boolean, got ${JSON.stringify(raw)}`);
+  }
+  return raw;
+}
+
+function normalizeAutopilot(raw: unknown): AutopilotConfig {
+  if (raw === undefined) {
+    return DEFAULT_AUTOPILOT;
+  }
+  if (!isPlainObject(raw)) {
+    fail(`autopilot must be an object, got ${JSON.stringify(raw)}`);
+  }
+  const ciFailure = autopilotSection(raw["ciFailure"], "autopilot.ciFailure");
+  const reviewComments = autopilotSection(raw["reviewComments"], "autopilot.reviewComments");
+  const autoMerge = autopilotSection(raw["autoMerge"], "autopilot.autoMerge");
+  const stuck = autopilotSection(raw["stuck"], "autopilot.stuck");
+  return {
+    ciFailure:
+      ciFailure === undefined
+        ? DEFAULT_AUTOPILOT.ciFailure
+        : {
+            enabled: autopilotEnabled(ciFailure, "autopilot.ciFailure"),
+            maxAttempts: autopilotPositiveInteger(
+              ciFailure["maxAttempts"],
+              "autopilot.ciFailure.maxAttempts",
+              DEFAULT_AUTOPILOT.ciFailure.maxAttempts,
+            ),
+          },
+    reviewComments:
+      reviewComments === undefined
+        ? DEFAULT_AUTOPILOT.reviewComments
+        : { enabled: autopilotEnabled(reviewComments, "autopilot.reviewComments") },
+    autoMerge:
+      autoMerge === undefined
+        ? DEFAULT_AUTOPILOT.autoMerge
+        : { enabled: autopilotEnabled(autoMerge, "autopilot.autoMerge") },
+    stuck:
+      stuck === undefined
+        ? DEFAULT_AUTOPILOT.stuck
+        : {
+            enabled: autopilotEnabled(stuck, "autopilot.stuck"),
+            thresholdMinutes: autopilotPositiveInteger(
+              stuck["thresholdMinutes"],
+              "autopilot.stuck.thresholdMinutes",
+              DEFAULT_AUTOPILOT.stuck.thresholdMinutes,
+            ),
+          },
   };
 }
 

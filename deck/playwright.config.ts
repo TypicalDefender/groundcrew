@@ -11,6 +11,9 @@ const FIXTURE_DIR = path.join(import.meta.dirname, "e2e", "fixture");
 export default defineConfig({
   testDir: "./e2e",
   testMatch: /.*\.e2e\.test\.ts/,
+  // One worker: the suites share a real tmux server, a real state dir, and
+  // the terminal bridge's single writer seat — parallel files contend.
+  workers: 1,
   timeout: 30_000,
   globalSetup: "./e2e/globalSetup.ts",
   use: {

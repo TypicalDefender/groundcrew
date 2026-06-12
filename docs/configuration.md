@@ -255,6 +255,21 @@ export default {
 See [Prepare Worktree Hooks](./setup-hooks.md) for the repo-local config shape
 and hook contract.
 
+## Autopilot (Automatic Follow-Ups)
+
+Evaluated each `crew run --watch` tick after the reviewer. Everything defaults **off** except stuck detection, which only notifies:
+
+```ts
+autopilot: {
+  ciFailure: { enabled: true, maxAttempts: 3 }, // nudge the agent with a CI log excerpt; default maxAttempts 2
+  reviewComments: { enabled: true },            // nudge with unresolved review comments
+  autoMerge: { enabled: false },                // merge approved + passing PRs
+  stuck: { enabled: true, thresholdMinutes: 10 }, // flag tasks whose pulse stopped changing
+},
+```
+
+Sections you omit keep their defaults. `maxAttempts` and `thresholdMinutes` must be integers ≥ 1; every `enabled` must be an explicit boolean.
+
 ## Full Reference
 
 | Key                                      | Default              | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
