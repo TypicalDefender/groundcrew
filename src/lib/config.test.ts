@@ -7,7 +7,7 @@ import {
   setEnvironmentVariable,
   snapshotEnvironmentVariables,
 } from "../testHelpers/env.ts";
-import type { Config, KnownRepository, QuietHoursConfig, ResolvedConfig } from "./config.ts";
+import type { Config, KnownRepository, ResolvedConfig } from "./config.ts";
 
 interface ConfigModule {
   loadConfig: () => Promise<Readonly<ResolvedConfig>>;
@@ -1578,68 +1578,6 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
       /orchestrator\.maximumInProgress must be an integer ≥ 1/,
-    );
-  });
-
-  it("accepts and resolves orchestrator quiet hours and the active poll interval", async () => {
-    const orchestrator = {
-      activePollIntervalMilliseconds: 5000,
-      quietHours: { start: "23:00", end: "07:00", pollIntervalMilliseconds: 900_000 },
-    };
-    const configPath = writeConfigFile(
-      temporary,
-      validConfigSource({ workspace: VALID_WORKSPACE(temporary), orchestrator }),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
-    const { loadConfig } = await loadFreshConfig();
-    await expect(loadConfig()).resolves.toMatchObject({ orchestrator });
-  });
-
-  it("rejects malformed quiet hours and a sub-minimum active interval", async () => {
-    const badStart = writeConfigFile(
-      temporary,
-      validConfigSource({
-        workspace: VALID_WORKSPACE(temporary),
-        orchestrator: {
-          quietHours: { start: "25:00", end: "07:00", pollIntervalMilliseconds: 900_000 },
-        },
-      }),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", badStart);
-    const startLoad = await loadFreshConfig();
-    await expect(startLoad.loadConfig()).rejects.toThrow(
-      /orchestrator\.quietHours\.start must be a 24-hour "HH:MM" time/,
-    );
-
-    const slowFloor = writeConfigFile(
-      temporary,
-      validConfigSource({
-        workspace: VALID_WORKSPACE(temporary),
-        orchestrator: {
-          quietHours: { start: "23:00", end: "07:00", pollIntervalMilliseconds: 50 },
-        },
-      }),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", slowFloor);
-    const slowLoad = await loadFreshConfig();
-    await expect(slowLoad.loadConfig()).rejects.toThrow(
-      /orchestrator\.quietHours\.pollIntervalMilliseconds must be an integer ≥ 250/,
-    );
-
-    const wrongShape = writeConfigFile(
-      temporary,
-      validConfigSource({
-        workspace: VALID_WORKSPACE(temporary),
-        orchestrator: {
-          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- exercising the runtime shape guard
-          quietHours: "overnight" as unknown as QuietHoursConfig,
-        },
-      }),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", wrongShape);
-    const shapeLoad = await loadFreshConfig();
-    await expect(shapeLoad.loadConfig()).rejects.toThrow(
-      /orchestrator\.quietHours must be an object like/,
     );
   });
 

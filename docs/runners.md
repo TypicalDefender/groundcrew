@@ -87,3 +87,13 @@ sbx exec -it groundcrew-claude gh auth login
 ```
 
 Replace `claude` with the sbx agent name for your agent and `<projectDir>` with `workspace.projectDir` from `crew.config.ts`. Manage lifecycle and auth with `sbx` directly (`sbx ls`, `sbx exec`, `sbx rm`). Groundcrew does not create, authenticate, regenerate, list, or remove sandboxes.
+
+## Keep-Awake (macOS)
+
+Long `crew run --watch` sessions die quietly when the laptop idle-sleeps. Opt in to a keep-awake hold:
+
+```ts
+local: { preventSleep: true },
+```
+
+While the watch loop runs, groundcrew holds `caffeinate -i -w <pid>`: `-i` blocks idle sleep (the display may still sleep), and `-w` ties the assertion to the crew process so the hold dies with it even on a hard kill. The hold is released on normal shutdown (Ctrl-C). On Linux and Windows — or when `caffeinate` is missing — the setting is a quiet no-op. One-shot `crew run` never holds a keep-awake.

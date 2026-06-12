@@ -8,6 +8,7 @@
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { loadConfigWithSource, type ResolvedConfig } from "../lib/config.ts";
+import { acquireKeepAwake } from "../lib/keepAwake.ts";
 import { type PauseState, readPause } from "../lib/pause.ts";
 import { findPullRequestsForBranch } from "../lib/pullRequests.ts";
 import {
@@ -233,6 +234,9 @@ async function runWatchLoop(
   };
   process.on("SIGINT", handleSigint);
   process.on("SIGTERM", handleSigterm);
+  // Opt-in (`local.preventSleep`): hold the machine awake for the whole
+  // watch run; released in the finally below and pid-bound as a backstop.
+  const keepAwake = acquireKeepAwake({ config });
   try {
     while (!shutdown.signal.aborted) {
       try {
@@ -272,6 +276,7 @@ async function runWatchLoop(
       await sleep(delay, shutdown.signal);
     }
   } finally {
+    keepAwake.release();
     if (forceExitTimer !== undefined) {
       clearTimeout(forceExitTimer);
     }

@@ -292,6 +292,11 @@ export interface Config {
    */
   local?: {
     runner?: LocalRunnerSetting;
+    /**
+     * Hold the machine out of idle sleep while `crew run --watch` runs
+     * (macOS only — `caffeinate -i`; a no-op elsewhere). Off by default.
+     */
+    preventSleep?: boolean;
   };
   logging?: {
     /**
@@ -367,6 +372,11 @@ export interface ResolvedConfig {
    */
   local: {
     runner: LocalRunnerSetting;
+    /**
+     * Hold the machine out of idle sleep during `crew run --watch` (macOS).
+     * Optional so test fixtures stay terse; `loadConfig` always writes it.
+     */
+    preventSleep?: boolean;
   };
   logging: {
     file: string;
@@ -1050,10 +1060,9 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
       "remote is no longer supported: groundcrew runs locally via safehouse/sdx/none; remove the remote block from your config",
     );
   }
-  const userLocal = (user as { local?: { runner?: unknown } }).local;
-  if (userLocal !== undefined && !isPlainObject(userLocal)) {
-    fail("local must be an object");
-  }
+  // Validated up front so a malformed `local` block fails with its own
+  // message rather than whatever later normalization trips over first.
+  const local = normalizeLocal((user as { local?: unknown }).local);
 
   const sources = normalizeSources((user as { sources?: unknown }).sources);
   const branchPrefix = normalizeBranchPrefix(user.git?.branchPrefix);
@@ -1077,9 +1086,7 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
       initial: resolveInitialPrompt(user.prompts, configDir),
     },
     workspaceKind: normalizeWorkspaceKind(user.workspaceKind, "workspaceKind") ?? "auto",
-    local: {
-      runner: normalizeLocalRunner(userLocal?.runner, "local.runner") ?? "auto",
-    },
+    local,
     logging: {
       file: expandHome(
         normalizeOptionalString(user.logging?.file, "logging.file") ?? defaultLogFile(),
@@ -1135,6 +1142,23 @@ function normalizeQuietHours(raw: unknown): QuietHoursConfig | undefined {
       record["pollIntervalMilliseconds"],
       "orchestrator.quietHours.pollIntervalMilliseconds",
     ),
+  };
+}
+
+function normalizeLocal(raw: unknown): ResolvedConfig["local"] {
+  if (raw === undefined) {
+    return { runner: "auto", preventSleep: false };
+  }
+  if (!isPlainObject(raw)) {
+    fail("local must be an object");
+  }
+  const { preventSleep, runner } = raw;
+  if (preventSleep !== undefined && typeof preventSleep !== "boolean") {
+    fail(`local.preventSleep must be a boolean, got ${JSON.stringify(preventSleep)}`);
+  }
+  return {
+    runner: normalizeLocalRunner(runner, "local.runner") ?? "auto",
+    preventSleep: preventSleep === true,
   };
 }
 

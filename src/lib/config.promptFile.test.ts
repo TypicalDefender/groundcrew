@@ -7,7 +7,7 @@ import {
   setEnvironmentVariable,
   snapshotEnvironmentVariables,
 } from "../testHelpers/env.ts";
-import type { Config, LoadedConfig, ResolvedConfig } from "./config.ts";
+import type { Config, LoadedConfig, QuietHoursConfig, ResolvedConfig } from "./config.ts";
 
 interface ConfigModule {
   loadConfig: () => Promise<Readonly<ResolvedConfig>>;
@@ -42,6 +42,19 @@ function validConfigSource(config: Config): string {
       ...config.agents,
     },
   });
+}
+/** Write `config`, point GROUNDCREW_CONFIG at it, and expect loadConfig to reject. */
+async function expectConfigRejection(
+  temporary: string,
+  config: Config,
+  pattern: RegExp,
+): Promise<void> {
+  setEnvironmentVariable(
+    "GROUNDCREW_CONFIG",
+    writeConfigFile(temporary, validConfigSource(config)),
+  );
+  const fresh = await loadFreshConfig();
+  await expect(fresh.loadConfig()).rejects.toThrow(pattern);
 }
 
 describe("loadConfig prompts.promptFile", () => {
@@ -262,5 +275,72 @@ describe("loadConfig prompts.promptFile", () => {
     const { loadConfig } = await loadFreshConfig();
 
     await expect(loadConfig()).rejects.toThrow(/unknown placeholder "\{\{unknownPlaceholder\}\}"/);
+  });
+
+  // Orchestrator pacing + keep-awake config validation lives here for the
+  // shared file-loading scaffolding (config.test.ts is at its size limit).
+
+  it("accepts and resolves orchestrator quiet hours and the active poll interval", async () => {
+    const orchestrator = {
+      activePollIntervalMilliseconds: 5000,
+      quietHours: { start: "23:00", end: "07:00", pollIntervalMilliseconds: 900_000 },
+    };
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        orchestrator,
+        local: { preventSleep: true },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).resolves.toMatchObject({
+      orchestrator,
+      local: { preventSleep: true },
+    });
+  });
+
+  it("rejects malformed quiet hours, slow floors, and non-boolean preventSleep", async () => {
+    await expectConfigRejection(
+      temporary,
+      {
+        workspace: VALID_WORKSPACE(temporary),
+        orchestrator: {
+          quietHours: { start: "25:00", end: "07:00", pollIntervalMilliseconds: 900_000 },
+        },
+      },
+      /orchestrator\.quietHours\.start must be a 24-hour "HH:MM" time/,
+    );
+    await expectConfigRejection(
+      temporary,
+      {
+        workspace: VALID_WORKSPACE(temporary),
+        orchestrator: {
+          quietHours: { start: "23:00", end: "07:00", pollIntervalMilliseconds: 50 },
+        },
+      },
+      /orchestrator\.quietHours\.pollIntervalMilliseconds must be an integer ≥ 250/,
+    );
+    await expectConfigRejection(
+      temporary,
+      {
+        workspace: VALID_WORKSPACE(temporary),
+        orchestrator: {
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- exercising the runtime shape guard
+          quietHours: "overnight" as unknown as QuietHoursConfig,
+        },
+      },
+      /orchestrator\.quietHours must be an object like/,
+    );
+    await expectConfigRejection(
+      temporary,
+      {
+        workspace: VALID_WORKSPACE(temporary),
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- exercising the runtime type guard
+        local: { preventSleep: "yes" as unknown as boolean },
+      },
+      /local\.preventSleep must be a boolean, got "yes"/,
+    );
   });
 });
