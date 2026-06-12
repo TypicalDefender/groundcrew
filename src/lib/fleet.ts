@@ -63,6 +63,8 @@ export interface FleetTask {
   workspace: FleetWorkspaceLiveness;
   /** Run-state agent when dispatched; otherwise the agent parsed from the issue. */
   agent: string | undefined;
+  /** The agent's configured badge color, when the agent has a definition. */
+  agentColor: string | undefined;
   branchName: string | undefined;
   worktreeDir: string | undefined;
   title: string | undefined;
@@ -105,6 +107,12 @@ export async function collectFleetSnapshot(
     runStates: listRunStates(config),
     worktreeEntries: worktrees.list(config),
     probe,
+    agentColors: Object.fromEntries(
+      Object.entries(config.agents.definitions).map(([name, definition]) => [
+        name,
+        definition.color,
+      ]),
+    ),
   });
 }
 
@@ -114,6 +122,8 @@ export interface JoinFleetSnapshotInput {
   runStates: readonly RunState[];
   worktreeEntries: readonly WorktreeEntry[];
   probe: WorkspaceProbe;
+  /** Agent name → badge color, from the crew config's agent definitions. */
+  agentColors?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -125,6 +135,7 @@ export interface JoinFleetSnapshotInput {
  */
 export function joinFleetSnapshot(input: JoinFleetSnapshotInput): FleetSnapshot {
   const { timestamp, board, runStates, worktreeEntries, probe } = input;
+  const agentColors = input.agentColors ?? {};
   const localByTask = collectLocalArtifacts(runStates, worktreeEntries);
   const issuesByNaturalId = groupIssuesByNaturalId(board);
 
@@ -140,13 +151,16 @@ export function joinFleetSnapshot(input: JoinFleetSnapshotInput): FleetSnapshot 
           issue: issues[0]!,
           local: localByTask.get(naturalId),
           liveness: sessionLiveness(probe, naturalId),
+          agentColors,
         }),
       );
       localByTask.delete(naturalId);
       continue;
     }
     for (const issue of issues) {
-      tasks.push(buildFleetTask({ id: issue.id, issue, local: undefined, liveness: "unknown" }));
+      tasks.push(
+        buildFleetTask({ id: issue.id, issue, local: undefined, liveness: "unknown", agentColors }),
+      );
     }
   }
   for (const [taskId, local] of localByTask) {
@@ -157,6 +171,7 @@ export function joinFleetSnapshot(input: JoinFleetSnapshotInput): FleetSnapshot 
         issue: undefined,
         local,
         liveness: sessionLiveness(probe, taskId),
+        agentColors,
       }),
     );
   }
@@ -234,10 +249,12 @@ function buildFleetTask(input: {
   issue: Issue | undefined;
   local: LocalArtifacts | undefined;
   liveness: FleetWorkspaceLiveness;
+  agentColors: Readonly<Record<string, string>>;
 }): FleetTask {
-  const { id, issue, local, liveness } = input;
+  const { id, issue, local, liveness, agentColors } = input;
   const run = local?.run;
   const taskWorktrees = local?.worktrees ?? [];
+  const agent = run?.agent ?? issue?.agent;
   return {
     id,
     status: issue?.status,
@@ -245,7 +262,8 @@ function buildFleetTask(input: {
     run,
     worktrees: taskWorktrees,
     workspace: liveness,
-    agent: run?.agent ?? issue?.agent,
+    agent,
+    agentColor: agent === undefined ? undefined : agentColors[agent],
     ...checkoutFields(taskWorktrees, run),
     ...displayFields(issue, run),
     updatedAt: latestTimestamp(run?.updatedAt, issue?.updatedAt),

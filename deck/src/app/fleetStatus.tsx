@@ -8,14 +8,14 @@ export function FleetStatus(): React.ReactElement {
 
   if (snapshot === undefined) {
     return (
-      <p className="mt-4 text-sm" style={{ color: "var(--text-inactive)" }}>
+      <p className="text-sm" style={{ color: "var(--text-inactive)" }}>
         Connecting to the fleet stream…
       </p>
     );
   }
 
   return (
-    <div className="mt-4 flex items-center gap-3 text-sm">
+    <div className="flex items-center gap-3 text-sm">
       <span
         className="rounded px-2 py-0.5"
         style={{

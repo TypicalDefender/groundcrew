@@ -363,6 +363,32 @@ describe(joinFleetSnapshot, () => {
 
     expect(taskById(actual.tasks, "team-13").updatedAt).toBe("2026-06-12T07:00:00.000Z");
   });
+
+  it("attaches the agent's configured badge color", () => {
+    const input = joinInput({
+      board: okBoard([canonicalLinearIssue({ naturalId: "team-14", agent: "codex" })]),
+      runStates: [runState({ task: "team-15", agent: "claude" })],
+      agentColors: { claude: "#C15F3C", codex: "#3C82C1" },
+    });
+
+    const actual = joinFleetSnapshot(input);
+
+    expect(taskById(actual.tasks, "team-14").agentColor).toBe("#3C82C1");
+    expect(taskById(actual.tasks, "team-15").agentColor).toBe("#C15F3C");
+  });
+
+  it("leaves agentColor undefined for unknown agents and agent-less tasks", () => {
+    const input = joinInput({
+      runStates: [runState({ task: "team-16", agent: "mystery" })],
+      worktreeEntries: [worktreeEntry({ task: "team-17" })],
+      agentColors: { claude: "#C15F3C" },
+    });
+
+    const actual = joinFleetSnapshot(input);
+
+    expect(taskById(actual.tasks, "team-16").agentColor).toBeUndefined();
+    expect(taskById(actual.tasks, "team-17").agentColor).toBeUndefined();
+  });
 });
 
 describe(collectFleetSnapshot, () => {
