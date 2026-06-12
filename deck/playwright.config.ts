@@ -15,6 +15,7 @@ export default defineConfig({
   globalSetup: "./e2e/globalSetup.ts",
   use: {
     baseURL: "http://localhost:4411",
+    screenshot: "only-on-failure",
   },
   webServer: {
     command: "npx next start --port 4411",

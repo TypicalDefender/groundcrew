@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { FleetTask } from "@clipboard-health/groundcrew";
 
+import type { ActionOutcome } from "@/components/actionBar";
 import { DraftTaskForm } from "@/components/draftTaskForm";
 import { TaskCard } from "@/components/taskCard";
 import { TaskDrawer } from "@/components/taskDrawer";
@@ -66,9 +67,37 @@ function LoadingBoard(): React.ReactElement {
   );
 }
 
+interface Toast {
+  id: number;
+  message: string;
+  tone: "success" | "error";
+}
+
 export function Board(): React.ReactElement {
   const { snapshot, degraded } = useFleet();
   const [openTask, setOpenTask] = useState<FleetTask | undefined>();
+  const [toasts, setToasts] = useState<readonly Toast[]>([]);
+  const toastSequence = useRef(0);
+
+  const pushToast = useCallback((outcome: ActionOutcome) => {
+    toastSequence.current += 1;
+    const id = toastSequence.current;
+    setToasts((current) => [...current, { id, ...outcome }]);
+  }, []);
+
+  useEffect(() => {
+    const timer =
+      toasts.length === 0
+        ? undefined
+        : setTimeout(() => {
+            setToasts((current) => current.slice(1));
+          }, 6000);
+    return () => {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+    };
+  }, [toasts]);
 
   if (snapshot === undefined) {
     return <LoadingBoard />;
@@ -164,7 +193,27 @@ export function Board(): React.ReactElement {
           onClose={() => {
             setOpenTask(undefined);
           }}
+          onOutcome={pushToast}
         />
+      )}
+
+      {toasts.length === 0 ? undefined : (
+        <div className="fixed bottom-4 right-4 z-[70] flex w-80 flex-col gap-2" aria-live="polite">
+          {toasts.map((toast) => (
+            <p
+              key={toast.id}
+              className="rounded-lg border px-3 py-2 text-sm shadow-md"
+              style={{
+                background: "var(--surface-card)",
+                borderColor:
+                  toast.tone === "error" ? "var(--border-error-tint)" : "var(--border-base)",
+                color: toast.tone === "error" ? "var(--semantic-danger)" : "var(--text-base)",
+              }}
+            >
+              {toast.message}
+            </p>
+          ))}
+        </div>
       )}
     </div>
   );

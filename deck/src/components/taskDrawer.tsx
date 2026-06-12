@@ -4,6 +4,7 @@ import { useEffect } from "react";
 
 import type { FleetTask } from "@clipboard-health/groundcrew";
 
+import { ActionBar, type ActionOutcome } from "@/components/actionBar";
 import { NudgeBox } from "@/components/nudgeBox";
 import { AgentBadge, Chip, PulseDot } from "@/components/primitives";
 import { ciTone, pulseColor, reviewTone } from "@/lib/statusTone";
@@ -54,9 +55,11 @@ function Mono({ children }: { children: React.ReactNode }): React.ReactElement {
 export function TaskDrawer({
   task,
   onClose,
+  onOutcome,
 }: {
   task: FleetTask;
   onClose: () => void;
+  onOutcome: (outcome: ActionOutcome) => void;
 }): React.ReactElement {
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
@@ -119,6 +122,8 @@ export function TaskDrawer({
             esc
           </button>
         </header>
+
+        <ActionBar task={task} onOutcome={onOutcome} />
 
         {run?.prUrl === undefined ? undefined : (
           <Section title="Pull request">
