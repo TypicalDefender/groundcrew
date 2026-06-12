@@ -60,6 +60,12 @@ export interface RunState {
   ci?: CiStatus;
   /** Review decision observed on the recorded PR. */
   review?: ReviewState;
+  /** Autopilot: CI-failure nudges sent so far (cleared when CI recovers). */
+  ciNudgeAttempts?: number;
+  /** Autopilot: when the review-comments nudge was delivered (cleared on review change). */
+  reviewNudgedAt?: string;
+  /** Autopilot: when the task was flagged stuck (cleared when the pulse moves). */
+  stuckSince?: string;
 }
 
 export interface RunStateDraft {
@@ -182,6 +188,9 @@ interface OptionalRunStateFields {
   prNumber: number | undefined;
   ci: CiStatus | undefined;
   review: ReviewState | undefined;
+  ciNudgeAttempts: number | undefined;
+  reviewNudgedAt: string | undefined;
+  stuckSince: string | undefined;
 }
 
 /** Spread-ready subset containing only the optional fields that are present. */
@@ -199,6 +208,9 @@ function presentOptionalFields(fields: OptionalRunStateFields): Partial<RunState
     ...(fields.prNumber === undefined ? {} : { prNumber: fields.prNumber }),
     ...(fields.ci === undefined ? {} : { ci: fields.ci }),
     ...(fields.review === undefined ? {} : { review: fields.review }),
+    ...(fields.ciNudgeAttempts === undefined ? {} : { ciNudgeAttempts: fields.ciNudgeAttempts }),
+    ...(fields.reviewNudgedAt === undefined ? {} : { reviewNudgedAt: fields.reviewNudgedAt }),
+    ...(fields.stuckSince === undefined ? {} : { stuckSince: fields.stuckSince }),
   };
 }
 
@@ -228,6 +240,9 @@ function parseRunState(value: unknown): RunState | undefined {
   const prNumber = positiveIntegerField(value, "prNumber");
   const ci = isCiStatus(value["ci"]) ? value["ci"] : undefined;
   const review = isReviewState(value["review"]) ? value["review"] : undefined;
+  const ciNudgeAttempts = positiveIntegerField(value, "ciNudgeAttempts");
+  const reviewNudgedAt = stringField(value, "reviewNudgedAt");
+  const stuckSince = stringField(value, "stuckSince");
   if (
     task === undefined ||
     repository === undefined ||
@@ -268,7 +283,39 @@ function parseRunState(value: unknown): RunState | undefined {
       prNumber,
       ci,
       review,
+      ciNudgeAttempts,
+      reviewNudgedAt,
+      stuckSince,
     }),
+  };
+}
+
+type ObservedRunStateFields = Pick<
+  OptionalRunStateFields,
+  | "pulse"
+  | "pulseChangedAt"
+  | "snoozedUntil"
+  | "prUrl"
+  | "prNumber"
+  | "ci"
+  | "review"
+  | "ciNudgeAttempts"
+  | "reviewNudgedAt"
+  | "stuckSince"
+>;
+
+function preservedObservations(existing: RunState | undefined): ObservedRunStateFields {
+  return {
+    pulse: existing?.pulse,
+    pulseChangedAt: existing?.pulseChangedAt,
+    snoozedUntil: existing?.snoozedUntil,
+    prUrl: existing?.prUrl,
+    prNumber: existing?.prNumber,
+    ci: existing?.ci,
+    review: existing?.review,
+    ciNudgeAttempts: existing?.ciNudgeAttempts,
+    reviewNudgedAt: existing?.reviewNudgedAt,
+    stuckSince: existing?.stuckSince,
   };
 }
 
@@ -333,15 +380,10 @@ export function recordRunState(input: RecordRunStateInput): RunState {
   const title = input.state.title ?? existing?.title;
   const url = input.state.url ?? existing?.url;
   const completionTaskId = input.state.completionTaskId ?? existing?.completionTaskId;
-  // Pulse, snooze, and PR fields are only ever written by their record
-  // functions; lifecycle transitions must not erase the last observations.
-  const pulse = existing?.pulse;
-  const pulseChangedAt = existing?.pulseChangedAt;
-  const snoozedUntil = existing?.snoozedUntil;
-  const prUrl = existing?.prUrl;
-  const prNumber = existing?.prNumber;
-  const ci = existing?.ci;
-  const review = existing?.review;
+  // Pulse, snooze, PR, and autopilot fields are only ever written by their
+  // record functions; lifecycle transitions must not erase the last
+  // observations.
+  const observed = preservedObservations(existing);
   const state: RunState = {
     task: taskKey(input.state.task),
     repository: input.state.repository,
@@ -359,13 +401,7 @@ export function recordRunState(input: RecordRunStateInput): RunState {
       title,
       url,
       completionTaskId,
-      pulse,
-      pulseChangedAt,
-      snoozedUntil,
-      prUrl,
-      prNumber,
-      ci,
-      review,
+      ...observed,
     }),
   };
   writeState(input.config, state);
@@ -453,6 +489,38 @@ export function recordTaskSnooze(input: RecordTaskSnoozeInput): RunState | undef
   };
   if (input.until === undefined) {
     delete state.snoozedUntil;
+  }
+  writeState(input.config, state);
+  return state;
+}
+
+export interface RecordTaskAutopilotInput {
+  config: ResolvedConfig;
+  task: string;
+  /** Fields to set; omitted fields are left alone. */
+  set?: Partial<Pick<RunState, "ciNudgeAttempts" | "reviewNudgedAt" | "stuckSince">>;
+  /** Fields to remove. */
+  clear?: readonly ("ciNudgeAttempts" | "reviewNudgedAt" | "stuckSince")[];
+}
+
+/**
+ * Autopilot bookkeeping (attempt counters, delivery memos, stuck flags)
+ * without bumping `updatedAt` — these are observations, not progress.
+ */
+export function recordTaskAutopilot(input: RecordTaskAutopilotInput): RunState | undefined {
+  const existing = readRunState(input.config, input.task);
+  if (existing === undefined) {
+    return undefined;
+  }
+  const state: RunState = { ...existing, ...input.set };
+  for (const key of input.clear ?? []) {
+    if (key === "ciNudgeAttempts") {
+      delete state.ciNudgeAttempts;
+    } else if (key === "reviewNudgedAt") {
+      delete state.reviewNudgedAt;
+    } else {
+      delete state.stuckSince;
+    }
   }
   writeState(input.config, state);
   return state;

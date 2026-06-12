@@ -27,6 +27,7 @@ import { getUsageByAgent, type UsageByAgent } from "../lib/usage.ts";
 import { errorMessage, log, sleep, writeOutput } from "../lib/util.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import { worktrees } from "../lib/worktrees.ts";
+import { type Autopilot, createAutopilot } from "./autopilot.ts";
 import { type Cleaner, createCleaner } from "./cleaner.ts";
 import { createDispatcher, type Dispatcher } from "./dispatcher.ts";
 import { listRunStates, recordTaskPullRequest } from "../lib/runState.ts";
@@ -193,6 +194,7 @@ export async function orchestrate(options: OrchestratorOptions): Promise<void> {
     },
   });
   const dispatcher: Dispatcher = createDispatcher({ config, board });
+  const autopilot: Autopilot = createAutopilot({ config });
 
   // Folded into the dispatcher's idle log lines in watch mode so each idle
   // tick prints one combined line instead of "<reason>" + "Next poll in Xs".
@@ -225,6 +227,11 @@ export async function orchestrate(options: OrchestratorOptions): Promise<void> {
     });
 
     await reviewer.runOnce(tickArguments);
+
+    await autopilot.runOnce({
+      runStates: listRunStates(config),
+      ...(signal === undefined ? {} : { signal }),
+    });
 
     await cleaner.runOnce(tickArguments);
   };

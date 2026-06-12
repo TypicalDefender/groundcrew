@@ -6,6 +6,18 @@ export {
   type InterruptWorkspaceOptions,
 } from "./commands/interruptWorkspace.ts";
 export { orchestrate, type OrchestratorOptions } from "./commands/orchestrator.ts";
+export {
+  createAutopilot,
+  DEFAULT_AUTOPILOT_DEPS,
+  decideFollowUps,
+  hasAutopilotCandidates,
+  staleMemoClears,
+  type Autopilot,
+  type AutopilotDeps,
+  type DecideFollowUpsInput,
+  type FollowUpAction,
+} from "./commands/autopilot.ts";
+export { recordTaskAutopilot, type RecordTaskAutopilotInput } from "./lib/runState.ts";
 export { resumeWorkspace, type ResumeWorkspaceOptions } from "./commands/resumeWorkspace.ts";
 export {
   setupWorkspace,
