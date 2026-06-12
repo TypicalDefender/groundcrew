@@ -27,6 +27,7 @@ Groundcrew watches assigned tasks, creates isolated worktrees, launches agent CL
 - **Sandboxed by default.** Safehouse or Docker Sandboxes isolate each agent on the host; `none` is an explicit escape hatch.
 - **Pluggable task sources.** Linear by default; Jira and local files via [task sources](./docs/task-sources.md).
 - **Multi-agent routing.** Ships `claude` and `codex` presets; bring your own CLI in config.
+- **Live dashboard.** `crew deck` serves a kanban board of the whole fleet — pulse, CI, and review state per task, streaming over SSE. See [the deck](./docs/deck.md).
 
 ## Prerequisites
 

@@ -89,6 +89,47 @@ export const cmuxAdapter: Adapter = {
     // oxlint-disable-next-line unicorn/no-useless-undefined -- explicit signal that the backend has no hint
     return undefined;
   },
+  async sendText(name, text, signal) {
+    // `cmux send` takes a workspace handle, not a title; resolve via list.
+    const raw = await listCmuxRaw(signal);
+    if (raw === undefined) {
+      return { kind: "unavailable" };
+    }
+    const match = raw.find((ws) => ws.title === name);
+    if (match === undefined) {
+      return { kind: "missing" };
+    }
+    try {
+      await runWorkspaceCommand("cmux", ["send", "--workspace", match.id, text], signal);
+      return { kind: "sent" };
+    } catch (error) {
+      if (isSignalAborted(signal)) {
+        throw error;
+      }
+      return { kind: "unavailable", error };
+    }
+  },
+  async capturePane(name, signal) {
+    // `cmux capture-pane` takes a workspace handle, not a title, so resolve
+    // the name through the same list lookup `close` uses.
+    const raw = await listCmuxRaw(signal);
+    const match = raw?.find((ws) => ws.title === name);
+    if (match === undefined) {
+      // List failed (already logged by listCmuxRaw) or the workspace is gone.
+      // oxlint-disable-next-line unicorn/no-useless-undefined -- undefined marks the capture as unavailable.
+      return undefined;
+    }
+    try {
+      return await runWorkspaceCommand("cmux", ["capture-pane", "--workspace", match.id], signal);
+    } catch (error) {
+      if (isSignalAborted(signal)) {
+        throw error;
+      }
+      debug(`cmux capture-pane failed for ${name}: ${errorMessage(error)}`);
+      // oxlint-disable-next-line unicorn/no-useless-undefined -- undefined marks the capture as unavailable.
+      return undefined;
+    }
+  },
 };
 
 interface CmuxRawWorkspace {

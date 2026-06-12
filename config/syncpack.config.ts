@@ -9,6 +9,11 @@ export default {
   ],
   versionGroups: [
     {
+      dependencies: ["@clipboard-health/groundcrew"],
+      isIgnored: true,
+      label: "The deck links the local package via file:.. — never the registry version.",
+    },
+    {
       dependencies: ["@types/node"],
       isIgnored: true,
       label: "Managed manually to stay in sync with the installed Node version.",

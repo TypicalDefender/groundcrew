@@ -7,6 +7,9 @@
 coverage/
 data/
 dist/
+test-results/
+next-env.d.ts
+.next/
 node_modules/
 out-tsc/
 tmp/

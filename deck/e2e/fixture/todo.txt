@@ -1,0 +1,4 @@
+Fix login retry race id:E2E-001 repo:repo-a agent:claude status:in-progress
+Say hello id:E2E-002 repo:repo-a agent:any status:todo
+Add billing export id:E2E-003 repo:repo-a agent:claude status:in-review
+Harden rate limiter id:E2E-004 repo:repo-a agent:codex status:in-review

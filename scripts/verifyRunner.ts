@@ -56,6 +56,9 @@ export const DEFAULT_VERIFY_CHECKS = [
   { cmd: "node --run spell:check -- .", mode: "parallel", name: "spell:check" },
   { cmd: "node --run syncpack:lint", mode: "parallel", name: "syncpack:lint" },
   { cmd: "node --run test", mode: "exclusive", name: "test", outputMode: "inherited" },
+  // Deck runs last and alone: next build is CPU/IO heavy and must not skew
+  // the timing-sensitive root checks.
+  { cmd: "npm run verify --workspace deck", mode: "exclusive", name: "deck:verify" },
 ] as const satisfies readonly VerifyCheck[];
 
 export async function runVerify(input: RunVerifyInput): Promise<RunVerifyResult> {

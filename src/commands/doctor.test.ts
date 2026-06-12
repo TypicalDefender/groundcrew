@@ -125,6 +125,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): Resolved
     prompts: { initial: "x" },
     workspaceKind: "auto",
     local: { runner: "auto" },
+    deck: { port: 4400, pollIntervalMilliseconds: 5000 },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }

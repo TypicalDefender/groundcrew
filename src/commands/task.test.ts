@@ -83,6 +83,7 @@ function makeConfig(): ResolvedConfig {
     prompts: { initial: "x" },
     workspaceKind: "auto",
     local: { runner: "auto" },
+    deck: { port: 4400, pollIntervalMilliseconds: 5000 },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
@@ -147,6 +148,9 @@ function pullRequest(overrides: Partial<PullRequestSummary> = {}): PullRequestSu
     state: overrides.state ?? "open",
     title: overrides.title ?? "Ready",
     headRefOid: overrides.headRefOid ?? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    ci: overrides.ci ?? "unknown",
+    review: overrides.review ?? "none",
+    unresolvedComments: overrides.unresolvedComments ?? 0,
   };
 }
 

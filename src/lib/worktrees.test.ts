@@ -45,6 +45,8 @@ vi.mock(import("./workspaces.ts"), async (importOriginal) => {
       close: vi.fn<typeof actual.workspaces.close>(),
       interrupt: vi.fn<typeof actual.workspaces.interrupt>(),
       accessHint: vi.fn<typeof actual.workspaces.accessHint>(),
+      capturePane: vi.fn<typeof actual.workspaces.capturePane>(),
+      sendText: vi.fn<typeof actual.workspaces.sendText>(),
     },
   };
 });
@@ -93,6 +95,7 @@ function makeConfig(overrides: {
     prompts: { initial: "x" },
     workspaceKind: "auto",
     local: { runner: "auto" },
+    deck: { port: 4400, pollIntervalMilliseconds: 5000 },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }

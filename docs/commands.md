@@ -79,11 +79,17 @@ crew task create "Run flaky triage sweep" \
 crew task done todo:flaky-triage-1
 ```
 
+## Deck
+
+`crew deck` builds and serves the deck — the crew's web dashboard — on `deck.port` from config (default 4400). `--port <n>` overrides the port for one run, `--dev` starts the hot-reloading dev server instead, and `--no-build` serves the existing production build. The server runs until interrupted.
+
 ## Status
 
-`crew status <TASK>` prints a read-only snapshot for one task: cached title and URL when present, recorded run state, live workspace presence, matching worktrees, git dirtiness, PR links for matching branches, recent log lines when present, and the task status from the configured task source.
+`crew status <TASK>` prints a read-only snapshot for one task: cached title and URL when present, recorded run state, live workspace presence, the task's pulse (activity state), matching worktrees, git dirtiness, PR links for matching branches, recent log lines when present, and the task status from the configured task source.
 
-`crew status` with no task prints the current inventory: known worktrees with cached task metadata, workspace/run-state agreement, attach hints, worktree paths, PR links, and stray sessions reported by the configured backend. Local diagnostics are printed before task-source fetches complete. When the source fetch succeeds, status also prints any in-progress source tasks with no local worktree, slot usage, and Queue/Blocked sections for eligible Todo tasks. Worktree-less in-progress rows include the task title, URL when the source provides one, and repository when the source resolves one. If the source fetch fails, Queue shows `unavailable: <reason>` and the slots line is omitted.
+`crew status` with no task prints the current inventory: known worktrees with cached task metadata, workspace/run-state agreement, a pulse field per row, attach hints, worktree paths, PR links, and stray sessions reported by the configured backend. Local diagnostics are printed before task-source fetches complete. When the source fetch succeeds, status also prints any in-progress source tasks with no local worktree, slot usage, and Queue/Blocked sections for eligible Todo tasks. Worktree-less in-progress rows include the task title, URL when the source provides one, and repository when the source resolves one. If the source fetch fails, Queue shows `unavailable: <reason>` and the slots line is omitted.
+
+The `pulse:` line classifies what the agent is doing right now: `active` (working), `ready` (recently finished a turn), `idle` (quiet for a while), `awaiting-input` (a prompt is visible in the workspace pane), `blocked` (the agent's session log reports an error), or `gone` (no live workspace session). The verdict comes from the agent's own session log on disk when one is found, falling back to how recently the captured pane text last changed. Each observation is also recorded on the task's run state (`pulse` + `pulseChangedAt`) so other tooling can read the last known activity without re-probing.
 
 Status is informational only. Use `crew cleanup <TASK>` to tear down stale worktrees and `crew resume <TASK>` to reopen preserved work.
 
@@ -97,6 +103,7 @@ task: eng-123  in-progress  https://linear.app/example/issue/ENG-123
 title: Multi-event extractor: year inference can produce date_start > date_end
 run: running; agent=claude; updated=2026-05-26T00:01:00.000Z; resumes=0
 workspace: live
+pulse: active (agent-native)
 
 Worktrees
 ---------

@@ -285,6 +285,13 @@ export interface Config {
      */
     file?: string;
   };
+  /** Deck (web dashboard) settings. */
+  deck?: {
+    /** Port the deck server listens on. Defaults to 4400. */
+    port?: number;
+    /** How often the deck refreshes the fleet snapshot. Defaults to 5000. */
+    pollIntervalMilliseconds?: number;
+  };
 }
 
 /**
@@ -344,6 +351,10 @@ export interface ResolvedConfig {
   };
   logging: {
     file: string;
+  };
+  deck: {
+    port: number;
+    pollIntervalMilliseconds: number;
   };
 }
 
@@ -1055,7 +1066,41 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
         normalizeOptionalString(user.logging?.file, "logging.file") ?? defaultLogFile(),
       ),
     },
+    deck: {
+      port: normalizeDeckPort(user.deck?.port),
+      pollIntervalMilliseconds: normalizeDeckPollInterval(user.deck?.pollIntervalMilliseconds),
+    },
   };
+}
+
+const DEFAULT_DECK_PORT = 4400;
+const DEFAULT_DECK_POLL_INTERVAL_MILLISECONDS = 5000;
+const MINIMUM_DECK_POLL_INTERVAL_MILLISECONDS = 250;
+
+function normalizeDeckPollInterval(interval: unknown): number {
+  if (interval === undefined) {
+    return DEFAULT_DECK_POLL_INTERVAL_MILLISECONDS;
+  }
+  if (
+    typeof interval !== "number" ||
+    !Number.isInteger(interval) ||
+    interval < MINIMUM_DECK_POLL_INTERVAL_MILLISECONDS
+  ) {
+    fail(
+      `deck.pollIntervalMilliseconds must be an integer ≥ ${MINIMUM_DECK_POLL_INTERVAL_MILLISECONDS}, got ${JSON.stringify(interval)}`,
+    );
+  }
+  return interval;
+}
+
+function normalizeDeckPort(port: unknown): number {
+  if (port === undefined) {
+    return DEFAULT_DECK_PORT;
+  }
+  if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65_535) {
+    fail(`deck.port must be an integer between 1 and 65535, got ${JSON.stringify(port)}`);
+  }
+  return port;
 }
 
 function validatePromptPlaceholders(template: string): void {

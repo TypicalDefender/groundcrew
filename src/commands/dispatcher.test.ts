@@ -24,6 +24,8 @@ vi.mock(import("../lib/workspaces.ts"), async (importOriginal) => {
       close: vi.fn<typeof actual.workspaces.close>(),
       interrupt: vi.fn<typeof actual.workspaces.interrupt>(),
       accessHint: vi.fn<typeof actual.workspaces.accessHint>(),
+      capturePane: vi.fn<typeof actual.workspaces.capturePane>(),
+      sendText: vi.fn<typeof actual.workspaces.sendText>(),
     },
   };
 });
@@ -59,6 +61,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
     local: { runner: "auto" },
+    deck: { port: 4400, pollIntervalMilliseconds: 5000 },
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
   };
 }

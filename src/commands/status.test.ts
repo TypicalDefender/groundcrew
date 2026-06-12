@@ -1,11 +1,12 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { buildSources } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { findPullRequestsForBranch } from "../lib/pullRequests.ts";
-import { readRunState, type RunState } from "../lib/runState.ts";
+import { readPulse } from "../lib/pulse.ts";
+import { readRunState, recordRunState, runStatePath, type RunState } from "../lib/runState.ts";
 import type { Issue as SourceIssue, TaskSource } from "../lib/taskSource.ts";
 import { type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
 import { type WorktreeDirtiness, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
@@ -56,6 +57,10 @@ vi.mock(import("../lib/pullRequests.ts"), async (importOriginal) => {
       .mockResolvedValue([]),
   };
 });
+vi.mock(import("../lib/pulse.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, readPulse: vi.fn<typeof actual.readPulse>() };
+});
 
 const loadConfigMock = vi.mocked(loadConfig);
 const readRunStateMock = vi.mocked(readRunState);
@@ -66,6 +71,7 @@ const listWorktreesMock = vi.mocked(worktrees.list);
 const probeWorkingTreeMock = vi.mocked(worktrees.probeWorkingTree);
 const buildSourcesMock = vi.mocked(buildSources);
 const findPullRequestsMock = vi.mocked(findPullRequestsForBranch);
+const readPulseMock = vi.mocked(readPulse);
 
 function sourceIssue(overrides: Partial<SourceIssue> = {}): SourceIssue {
   return {
@@ -159,6 +165,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
     local: { runner: "auto", ...overrides.local },
+    deck: { port: 4400, pollIntervalMilliseconds: 5000, ...overrides.deck },
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
   };
 }
@@ -203,6 +210,7 @@ describe(status, () => {
     temporaryDirectory = mkdtempSync(path.join(tmpdir(), "groundcrew-status-test-"));
     readRunStateMock.mockReturnValue(runState({ reason: "manual pause" }));
     workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+    readPulseMock.mockResolvedValue({ state: "idle", source: "pane" });
     workspaceAccessHintMock.mockReset();
     findPullRequestsMock.mockResolvedValue([]);
     buildSourcesMock.mockResolvedValue([]);
@@ -396,6 +404,7 @@ describe(status, () => {
   it("leaves the per-task run: line as bare `running` when the session is live", async () => {
     readRunStateMock.mockReturnValue(runState({ state: "running" }));
     workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+    readPulseMock.mockResolvedValue({ state: "idle", source: "pane" });
 
     await status(makeConfig(), { task: "team-1" });
 
@@ -424,6 +433,7 @@ describe(status, () => {
     // `hint: crew cleanup`), not by decorating the per-task `run:` line.
     readRunStateMock.mockReset();
     workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+    readPulseMock.mockResolvedValue({ state: "idle", source: "pane" });
 
     await status(makeConfig(), { task: "team-1" });
 
@@ -589,6 +599,9 @@ describe(status, () => {
         state: "open",
         title: "Wire up auth",
         headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ci: "unknown",
+        review: "none",
+        unresolvedComments: 0,
       },
     ]);
 
@@ -604,6 +617,7 @@ describe(status, () => {
   it("hides the Stray sessions section when every live session matches a worktree", async () => {
     listWorktreesMock.mockReturnValue([worktree({ task: "team-1", repository: "repo-a" })]);
     workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+    readPulseMock.mockResolvedValue({ state: "idle", source: "pane" });
 
     await status(makeConfig());
 
@@ -675,6 +689,7 @@ describe(status, () => {
     // idle (no run-state) + live session => stray.
     readRunStateMock.mockReset();
     workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+    readPulseMock.mockResolvedValue({ state: "idle", source: "pane" });
 
     await status(makeConfig());
 
@@ -741,6 +756,7 @@ describe(status, () => {
     listWorktreesMock.mockReturnValue([worktree({ task: "team-1", repository: "repo-a" })]);
     readRunStateMock.mockReturnValue(runState({ state: "running" }));
     workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+    readPulseMock.mockResolvedValue({ state: "idle", source: "pane" });
 
     await status(makeConfig());
 
@@ -780,6 +796,9 @@ describe(status, () => {
         state: "open",
         title: "Wire up auth",
         headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ci: "unknown",
+        review: "none",
+        unresolvedComments: 0,
       },
     ]);
 
@@ -803,6 +822,9 @@ describe(status, () => {
         state: "open",
         title: "a",
         headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ci: "unknown",
+        review: "none",
+        unresolvedComments: 0,
       },
       {
         url: "https://x/pull/2",
@@ -810,6 +832,9 @@ describe(status, () => {
         state: "merged",
         title: "b",
         headRefOid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        ci: "unknown",
+        review: "none",
+        unresolvedComments: 0,
       },
     ]);
 
@@ -840,6 +865,9 @@ describe(status, () => {
         state: "open",
         title: "Something",
         headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ci: "unknown",
+        review: "none",
+        unresolvedComments: 0,
       },
     ]);
 
@@ -858,6 +886,7 @@ describe(status, () => {
       runState({ task: "team-1", url: "https://linear.app/example/issue/TEAM-1" }),
     );
     workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+    readPulseMock.mockResolvedValue({ state: "idle", source: "pane" });
 
     await status(makeConfig());
 
@@ -998,6 +1027,7 @@ describe(status, () => {
     // resolves. So nothing renders while the fetch is pending.
     listWorktreesMock.mockReturnValue([worktree({ task: "team-1", repository: "repo-a" })]);
     workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+    readPulseMock.mockResolvedValue({ state: "idle", source: "pane" });
     let resolveFetch: ((issues: SourceIssue[]) => void) | undefined;
     const pendingFetch = new Promise<SourceIssue[]>((resolve) => {
       resolveFetch = resolve;
@@ -1293,6 +1323,72 @@ describe(status, () => {
     expect(output).not.toContain("session dead");
     expect(output).toContain("Workspace probe unavailable: cmux unavailable");
   });
+
+  it("prints the task pulse with its source", async () => {
+    const config = makeConfig();
+    readPulseMock.mockResolvedValue({ state: "active", source: "agent-native" });
+
+    await status(config, { task: "team-1" });
+
+    expect(consoleLog.output()).toContain("pulse: active (agent-native)");
+  });
+
+  it("prefers the pulse detail over the source when present", async () => {
+    const config = makeConfig();
+    readPulseMock.mockResolvedValue({
+      state: "awaiting-input",
+      source: "pane",
+      detail: "prompt visible in pane",
+    });
+
+    await status(config, { task: "team-1" });
+
+    expect(consoleLog.output()).toContain("pulse: awaiting-input (prompt visible in pane)");
+  });
+
+  it("shows a pulse field on inventory rows", async () => {
+    const config = makeConfig();
+    readPulseMock.mockResolvedValue({ state: "ready", source: "pane" });
+
+    await status(config);
+
+    expect(consoleLog.output()).toContain("pulse:     ready (pane)");
+  });
+
+  it("omits the inventory pulse field when the pulse read fails", async () => {
+    const config = makeConfig();
+    readPulseMock.mockRejectedValue(new Error("probe exploded"));
+
+    await status(config);
+
+    expect(consoleLog.output()).not.toContain("pulse:");
+  });
+
+  it("records the observed pulse on the task's run state", async () => {
+    const logFile = path.join(temporaryDirectory, "groundcrew.log");
+    const config = makeConfig({ logging: { file: logFile } });
+    recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "running",
+      },
+    });
+    readPulseMock.mockResolvedValue({ state: "active", source: "agent-native" });
+
+    await status(config, { task: "team-1" });
+
+    const stored: unknown = JSON.parse(readFileSync(runStatePath(config, "team-1"), "utf8"));
+    expect(stored).toMatchObject({
+      pulse: "active",
+      pulseChangedAt: "2026-05-26T02:14:30.000Z",
+    });
+  });
 });
 
 describe(statusCli, () => {
@@ -1308,6 +1404,7 @@ describe(statusCli, () => {
     findPullRequestsMock.mockResolvedValue([]);
     readRunStateMock.mockReset();
     buildSourcesMock.mockResolvedValue([]);
+    readPulseMock.mockResolvedValue({ state: "idle", source: "pane" });
   });
 
   afterEach(() => {

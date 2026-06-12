@@ -20,6 +20,9 @@
   "bin": {
     "crew": "./bin/run.js"
   },
+  "workspaces": [
+    "deck"
+  ],
   "files": [
     "README.md",
     "bin",

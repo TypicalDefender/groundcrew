@@ -19,6 +19,7 @@ import { errorMessage, log, sleep, writeOutput } from "../lib/util.ts";
 import { worktrees } from "../lib/worktrees.ts";
 import { type Cleaner, createCleaner } from "./cleaner.ts";
 import { createDispatcher, type Dispatcher } from "./dispatcher.ts";
+import { recordTaskPullRequest } from "../lib/runState.ts";
 import { createReviewer, type Reviewer } from "./reviewer.ts";
 
 const RATE_LIMIT_DELAY_MS = 60_000;
@@ -121,6 +122,16 @@ export async function orchestrate(options: OrchestratorOptions): Promise<void> {
   const reviewer: Reviewer = createReviewer({
     board,
     findPullRequests: findPullRequestsForBranch,
+    recordPullRequest: ({ task, pullRequest }) => {
+      recordTaskPullRequest({
+        config,
+        task,
+        prUrl: pullRequest.url,
+        prNumber: pullRequest.number,
+        ci: pullRequest.ci,
+        review: pullRequest.review,
+      });
+    },
   });
   const dispatcher: Dispatcher = createDispatcher({ config, board });
 

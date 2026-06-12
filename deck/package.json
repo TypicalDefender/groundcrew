@@ -1,0 +1,32 @@
+{
+  "name": "@clipboard-health/groundcrew-deck",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Web dashboard for the crew: a live board of tasks, workspaces, and pull requests.",
+  "type": "module",
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev --port 4400",
+    "lint": "tsc --noEmit",
+    "start": "next start --port 4400",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "verify": "npm run lint && npm run test && npm run build && npm run e2e"
+  },
+  "dependencies": {
+    "@clipboard-health/groundcrew": "file:..",
+    "next": "15.5.19",
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.60.0",
+    "@tailwindcss/postcss": "4.3.0",
+    "@types/node": "25.9.2",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "tailwindcss": "4.3.0",
+    "typescript": "6.0.3",
+    "vitest": "4.1.8"
+  }
+}

@@ -1581,6 +1581,72 @@ describe("loadConfig", () => {
     );
   });
 
+  it("defaults deck.port to 4400 and accepts an override", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({ workspace: VALID_WORKSPACE(temporary) }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).resolves.toMatchObject({ deck: { port: 4400 } });
+
+    const overridden = writeConfigFile(
+      temporary,
+      validConfigSource({ workspace: VALID_WORKSPACE(temporary), deck: { port: 5111 } }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", overridden);
+    const fresh = await loadFreshConfig();
+    await expect(fresh.loadConfig()).resolves.toMatchObject({ deck: { port: 5111 } });
+  });
+
+  it("defaults and validates deck.pollIntervalMilliseconds", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({ workspace: VALID_WORKSPACE(temporary) }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).resolves.toMatchObject({
+      deck: { pollIntervalMilliseconds: 5000 },
+    });
+
+    const custom = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        deck: { pollIntervalMilliseconds: 30_000 },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", custom);
+    const customLoad = await loadFreshConfig();
+    await expect(customLoad.loadConfig()).resolves.toMatchObject({
+      deck: { pollIntervalMilliseconds: 30_000 },
+    });
+
+    const tooFast = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        deck: { pollIntervalMilliseconds: 50 },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", tooFast);
+    const fresh = await loadFreshConfig();
+    await expect(fresh.loadConfig()).rejects.toThrow(
+      /deck\.pollIntervalMilliseconds must be an integer ≥ 250/,
+    );
+  });
+
+  it("fails when deck.port is not a sane port number", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({ workspace: VALID_WORKSPACE(temporary), deck: { port: 0.5 } }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(/deck\.port must be an integer between 1 and 65535/);
+  });
+
   it("fails when an override drops cmd to empty", async () => {
     const configPath = writeConfigFile(
       temporary,

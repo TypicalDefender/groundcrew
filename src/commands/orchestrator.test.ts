@@ -48,6 +48,8 @@ vi.mock(import("../lib/workspaces.ts"), async (importOriginal) => {
       close: vi.fn<typeof actual.workspaces.close>(),
       interrupt: vi.fn<typeof actual.workspaces.interrupt>(),
       accessHint: vi.fn<typeof actual.workspaces.accessHint>(),
+      capturePane: vi.fn<typeof actual.workspaces.capturePane>(),
+      sendText: vi.fn<typeof actual.workspaces.sendText>(),
     },
   };
 });
@@ -123,6 +125,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
     local: { runner: "auto", ...overrides.local },
+    deck: { port: 4400, pollIntervalMilliseconds: 5000, ...overrides.deck },
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
   };
 }
@@ -1337,6 +1340,9 @@ JSON
           state: "open",
           title: "PR",
           headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          ci: "unknown",
+          review: "none",
+          unresolvedComments: 0,
         },
       ]);
       const client = makeClient({ pages: [[]] });

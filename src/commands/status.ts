@@ -4,7 +4,8 @@ import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { findPullRequestsForBranch, type PullRequestSummary } from "../lib/pullRequests.ts";
-import { readRunState, type RunState } from "../lib/runState.ts";
+import { type Pulse, readPulse } from "../lib/pulse.ts";
+import { readRunState, recordTaskPulse, type RunState } from "../lib/runState.ts";
 import {
   type CanonicalStatus,
   type GroundcrewIssue,
@@ -225,16 +226,47 @@ async function writeTaskStatus(config: ResolvedConfig, rawTask: string): Promise
     readTaskSourceStatus(config, task),
   ]);
   const accessHint = await exitedWorkspaceAccessHint(config, workspaceProbe, task);
+  const pulse = await observeTaskPulse(config, task, workspaceProbe, runState);
   writeOutput(formatTaskLine(task, runState, sourceStatus));
   writeTaskTitle(runState, sourceStatus);
   writeOutput(`run: ${formatRunState(runState, runProbeFlags(runState, workspaceProbe, task))}`);
   writeOutput(`workspace: ${taskWorkspaceText(workspaceProbe, task)}`);
+  writeOutput(`pulse: ${formatPulse(pulse)}`);
   if (accessHint !== undefined) {
     writeOutput(`attach: ${accessHint.command}`);
   }
 
   await writeTaskWorktrees(config, task);
   writeRecentLogs(config, task);
+}
+
+/**
+ * Read the task's pulse (sharing the already-fetched probe) and persist the
+ * observation on its run state so other consumers see the last transition.
+ * Recording is a no-op for tasks with no run state.
+ */
+async function observeTaskPulse(
+  config: ResolvedConfig,
+  task: string,
+  probe: WorkspaceProbe,
+  runState: RunState | undefined,
+): Promise<Pulse> {
+  const pulse = await withLogOutputSuppressed(
+    async () =>
+      await readPulse({
+        config,
+        task,
+        probe,
+        ...(runState === undefined ? {} : { runState }),
+      }),
+  );
+  recordTaskPulse({ config, task, pulse: pulse.state });
+  return pulse;
+}
+
+/** `active (agent-native)`, or the probe's own wording when it has one. */
+function formatPulse(pulse: Pulse): string {
+  return `${pulse.state} (${pulse.detail ?? pulse.source})`;
 }
 
 /**
@@ -405,12 +437,11 @@ async function writeInventoryWorktrees(
   }
   const accessHints = await collectAccessHints(config, entries);
   const pullRequests = await collectPullRequests(entries);
-  const runStates = new Map<string, RunState | undefined>();
+  const uniqueTasks = [...new Set(entries.map((entry) => entry.task))];
+  const runStates = new Map(uniqueTasks.map((task) => [task, readRunState(config, task)] as const));
+  const pulses = await collectPulses(config, probe, uniqueTasks, runStates);
   const now = new Date();
   for (const [index, entry] of entries.entries()) {
-    if (!runStates.has(entry.task)) {
-      runStates.set(entry.task, readRunState(config, entry.task));
-    }
     const runState = runStates.get(entry.task);
     const accessHint = accessHints.get(entry.task);
     // `collectPullRequests` guarantees an entry for every worktree dir seen
@@ -425,6 +456,10 @@ async function writeInventoryWorktrees(
       writeOutput(inventoryField("title", runState.title));
     }
     writeOutput(inventoryField("state", inventoryStateText(runState, probe, entry.task, now)));
+    const taskPulse = pulses.get(entry.task);
+    if (taskPulse !== undefined) {
+      writeOutput(inventoryField("pulse", formatPulse(taskPulse)));
+    }
     // `state:` is the local run lifecycle; `task:` is the remote status that
     // actually drives the slot count. They're sourced independently and can
     // legitimately disagree, so they sit adjacent. Omitted when the board fetch
@@ -446,6 +481,27 @@ async function writeInventoryWorktrees(
       writeOutput(inventoryField("hint", hint));
     }
   }
+}
+
+/**
+ * Pulse per unique task, observed concurrently against the shared probe.
+ * A failed read renders as a missing field rather than failing the report.
+ */
+async function collectPulses(
+  config: ResolvedConfig,
+  probe: WorkspaceProbe,
+  tasks: readonly string[],
+  runStates: ReadonlyMap<string, RunState | undefined>,
+): Promise<Map<string, Pulse | undefined>> {
+  const results = await Promise.allSettled(
+    tasks.map(async (task) => await observeTaskPulse(config, task, probe, runStates.get(task))),
+  );
+  return new Map(
+    tasks.map((task, index) => {
+      const result = results[index];
+      return [task, result?.status === "fulfilled" ? result.value : undefined] as const;
+    }),
+  );
 }
 
 async function collectAccessHints(

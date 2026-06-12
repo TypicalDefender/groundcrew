@@ -45,9 +45,21 @@ export type FindPullRequests = (arguments_: {
   signal?: AbortSignal;
 }) => Promise<readonly PullRequestSummary[]>;
 
+/**
+ * Injected persistence for the observed PR. The reviewer reports what it saw
+ * (URL, number, CI, review) for the task's most relevant PR each tick; the
+ * orchestrator wires this to the run-state store so status surfaces and
+ * follow-up automation read fresh PR facts without their own gh calls.
+ */
+export type RecordPullRequest = (arguments_: {
+  task: string;
+  pullRequest: PullRequestSummary;
+}) => void;
+
 interface ReviewerDeps {
   board: Board;
   findPullRequests: FindPullRequests;
+  recordPullRequest?: RecordPullRequest;
 }
 
 /** Per-tick inputs, mirroring the other orchestrator steps' shape. */
@@ -108,7 +120,7 @@ function matchingWorktreeEntries(arguments_: {
 }
 
 export function createReviewer(deps: ReviewerDeps): Reviewer {
-  const { board, findPullRequests } = deps;
+  const { board, findPullRequests, recordPullRequest } = deps;
 
   async function runOnce(arguments_: ReviewArguments): Promise<void> {
     const { state, worktreeEntries, dryRun, signal } = arguments_;
@@ -162,6 +174,7 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
         debug(`PR lookup failed for ${task} (${entry.branchName}): ${errorMessage(error)}`);
         continue;
       }
+      persistObservedPullRequest(task, pullRequests);
       const transition = intendedTransition(pullRequests, issue.status);
       if (transition === undefined) {
         continue;
@@ -226,5 +239,36 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
     }
   }
 
+  // Record the task's most relevant PR — open beats merged beats closed —
+  // so downstream surfaces show the live one while it exists and the landed
+  // one after. Recording failures only cost freshness, never the review.
+  function persistObservedPullRequest(
+    task: string,
+    pullRequests: readonly PullRequestSummary[],
+  ): void {
+    if (recordPullRequest === undefined) {
+      return;
+    }
+    const pullRequest = mostRelevantPullRequest(pullRequests);
+    if (pullRequest === undefined) {
+      return;
+    }
+    try {
+      recordPullRequest({ task, pullRequest });
+    } catch (error) {
+      debug(`PR record failed for ${task}: ${errorMessage(error)}`);
+    }
+  }
+
   return { runOnce };
+}
+
+function mostRelevantPullRequest(
+  pullRequests: readonly PullRequestSummary[],
+): PullRequestSummary | undefined {
+  return (
+    pullRequests.find((pr) => pr.state === "open") ??
+    pullRequests.find((pr) => pr.state === "merged") ??
+    pullRequests[0]
+  );
 }

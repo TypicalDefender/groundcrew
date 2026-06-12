@@ -1,8 +1,12 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import type { ResolvedConfig } from "./config.ts";
-import { normalizePlainTaskId } from "./taskId.ts";
+// Type-only imports: erased at compile time, so no runtime cycle with
+// pulse.ts (which imports this module for run-state reads).
+import type { CiStatus, ReviewState } from "./pullRequests.ts";
+import type { PulseState } from "./pulse.ts";
+import { isPlainTaskId, normalizePlainTaskId } from "./taskId.ts";
 
 export type RunLifecycleState = "running" | "interrupted" | "resumed" | "failed-to-launch";
 
@@ -37,6 +41,20 @@ export interface RunState {
    * resumed workers keep the same completion target as the original launch.
    */
   completionTaskId?: string;
+  /**
+   * Last observed pulse (activity state). Written by `recordTaskPulse`
+   * whenever a consumer reads the pulse; lifecycle transitions preserve it.
+   */
+  pulse?: PulseState;
+  /** When the pulse last changed value (not when it was last observed). */
+  pulseChangedAt?: string;
+  /** URL of the task's pull request, recorded by the reviewer each tick. */
+  prUrl?: string;
+  prNumber?: number;
+  /** Aggregate CI verdict observed on the recorded PR. */
+  ci?: CiStatus;
+  /** Review decision observed on the recorded PR. */
+  review?: ReviewState;
 }
 
 export interface RunStateDraft {
@@ -95,6 +113,11 @@ function stringField(value: Record<string, unknown>, key: string): string | unde
   return typeof field === "string" && field.length > 0 ? field : undefined;
 }
 
+function positiveIntegerField(value: Record<string, unknown>, key: string): number | undefined {
+  const field = value[key];
+  return typeof field === "number" && Number.isInteger(field) && field > 0 ? field : undefined;
+}
+
 function isRunLifecycleState(value: unknown): value is RunLifecycleState {
   return (
     value === "running" ||
@@ -102,6 +125,74 @@ function isRunLifecycleState(value: unknown): value is RunLifecycleState {
     value === "resumed" ||
     value === "failed-to-launch"
   );
+}
+
+// Record<PulseState, true> so adding a state to the union without updating
+// this map is a compile error in both directions.
+const PULSE_STATE_SET: Record<PulseState, true> = {
+  active: true,
+  ready: true,
+  idle: true,
+  "awaiting-input": true,
+  blocked: true,
+  gone: true,
+};
+
+function isPulseState(value: unknown): value is PulseState {
+  return typeof value === "string" && value in PULSE_STATE_SET;
+}
+
+const CI_STATUS_SET: Record<CiStatus, true> = {
+  pending: true,
+  passing: true,
+  failing: true,
+  unknown: true,
+};
+
+function isCiStatus(value: unknown): value is CiStatus {
+  return typeof value === "string" && value in CI_STATUS_SET;
+}
+
+const REVIEW_STATE_SET: Record<ReviewState, true> = {
+  none: true,
+  pending: true,
+  "changes-requested": true,
+  approved: true,
+};
+
+function isReviewState(value: unknown): value is ReviewState {
+  return typeof value === "string" && value in REVIEW_STATE_SET;
+}
+
+interface OptionalRunStateFields {
+  reason: string | undefined;
+  detail: string | undefined;
+  title: string | undefined;
+  url: string | undefined;
+  completionTaskId: string | undefined;
+  pulse: PulseState | undefined;
+  pulseChangedAt: string | undefined;
+  prUrl: string | undefined;
+  prNumber: number | undefined;
+  ci: CiStatus | undefined;
+  review: ReviewState | undefined;
+}
+
+/** Spread-ready subset containing only the optional fields that are present. */
+function presentOptionalFields(fields: OptionalRunStateFields): Partial<RunState> {
+  return {
+    ...(fields.reason === undefined ? {} : { reason: fields.reason }),
+    ...(fields.detail === undefined ? {} : { detail: fields.detail }),
+    ...(fields.title === undefined ? {} : { title: fields.title }),
+    ...(fields.url === undefined ? {} : { url: fields.url }),
+    ...(fields.completionTaskId === undefined ? {} : { completionTaskId: fields.completionTaskId }),
+    ...(fields.pulse === undefined ? {} : { pulse: fields.pulse }),
+    ...(fields.pulseChangedAt === undefined ? {} : { pulseChangedAt: fields.pulseChangedAt }),
+    ...(fields.prUrl === undefined ? {} : { prUrl: fields.prUrl }),
+    ...(fields.prNumber === undefined ? {} : { prNumber: fields.prNumber }),
+    ...(fields.ci === undefined ? {} : { ci: fields.ci }),
+    ...(fields.review === undefined ? {} : { review: fields.review }),
+  };
 }
 
 function parseRunState(value: unknown): RunState | undefined {
@@ -122,6 +213,13 @@ function parseRunState(value: unknown): RunState | undefined {
   const title = stringField(value, "title");
   const url = stringField(value, "url");
   const completionTaskId = stringField(value, "completionTaskId");
+  // Unknown enum values degrade to "field not recorded", not a corrupt record.
+  const pulse = isPulseState(value["pulse"]) ? value["pulse"] : undefined;
+  const pulseChangedAt = stringField(value, "pulseChangedAt");
+  const prUrl = stringField(value, "prUrl");
+  const prNumber = positiveIntegerField(value, "prNumber");
+  const ci = isCiStatus(value["ci"]) ? value["ci"] : undefined;
+  const review = isReviewState(value["review"]) ? value["review"] : undefined;
   if (
     task === undefined ||
     repository === undefined ||
@@ -149,11 +247,19 @@ function parseRunState(value: unknown): RunState | undefined {
     createdAt,
     updatedAt,
     resumeCount,
-    ...(reason === undefined ? {} : { reason }),
-    ...(detail === undefined ? {} : { detail }),
-    ...(title === undefined ? {} : { title }),
-    ...(url === undefined ? {} : { url }),
-    ...(completionTaskId === undefined ? {} : { completionTaskId }),
+    ...presentOptionalFields({
+      reason,
+      detail,
+      title,
+      url,
+      completionTaskId,
+      pulse,
+      pulseChangedAt,
+      prUrl,
+      prNumber,
+      ci,
+      review,
+    }),
   };
 }
 
@@ -179,6 +285,36 @@ export function readRunState(config: ResolvedConfig, task: string): RunState | u
   }
 }
 
+/**
+ * Read every parseable run state in the state directory, sorted by task id.
+ * Files that aren't `<task>.json` or fail to parse are skipped — a corrupt
+ * record degrades to "no run state" exactly as it does in `readRunState`.
+ * A missing directory means no task has ever been dispatched: empty fleet.
+ */
+export function listRunStates(config: ResolvedConfig): RunState[] {
+  let fileNames: string[];
+  try {
+    fileNames = readdirSync(runStateDirectory(config));
+  } catch {
+    return [];
+  }
+  const states: RunState[] = [];
+  for (const fileName of fileNames) {
+    if (!fileName.endsWith(".json")) {
+      continue;
+    }
+    const task = fileName.slice(0, -".json".length);
+    if (!isPlainTaskId(task)) {
+      continue;
+    }
+    const state = readRunState(config, task);
+    if (state !== undefined) {
+      states.push(state);
+    }
+  }
+  return states.toSorted((left, right) => left.task.localeCompare(right.task));
+}
+
 export function recordRunState(input: RecordRunStateInput): RunState {
   const existing = readRunState(input.config, input.state.task);
   const timestamp = nowIso();
@@ -188,6 +324,14 @@ export function recordRunState(input: RecordRunStateInput): RunState {
   const title = input.state.title ?? existing?.title;
   const url = input.state.url ?? existing?.url;
   const completionTaskId = input.state.completionTaskId ?? existing?.completionTaskId;
+  // Pulse and PR fields are only ever written by their record functions;
+  // lifecycle transitions must not erase the last observations.
+  const pulse = existing?.pulse;
+  const pulseChangedAt = existing?.pulseChangedAt;
+  const prUrl = existing?.prUrl;
+  const prNumber = existing?.prNumber;
+  const ci = existing?.ci;
+  const review = existing?.review;
   const state: RunState = {
     task: taskKey(input.state.task),
     repository: input.state.repository,
@@ -199,12 +343,79 @@ export function recordRunState(input: RecordRunStateInput): RunState {
     createdAt: existing?.createdAt ?? timestamp,
     updatedAt: timestamp,
     resumeCount: input.state.resumeCount ?? existing?.resumeCount ?? 0,
-    ...(input.state.reason === undefined ? {} : { reason: input.state.reason }),
-    ...(input.state.detail === undefined ? {} : { detail: input.state.detail }),
-    ...(title === undefined ? {} : { title }),
-    ...(url === undefined ? {} : { url }),
-    ...(completionTaskId === undefined ? {} : { completionTaskId }),
+    ...presentOptionalFields({
+      reason: input.state.reason,
+      detail: input.state.detail,
+      title,
+      url,
+      completionTaskId,
+      pulse,
+      pulseChangedAt,
+      prUrl,
+      prNumber,
+      ci,
+      review,
+    }),
   };
+  writeState(input.config, state);
+  return state;
+}
+
+export interface RecordTaskPullRequestInput {
+  config: ResolvedConfig;
+  task: string;
+  prUrl: string;
+  prNumber: number;
+  ci: CiStatus;
+  review: ReviewState;
+}
+
+/**
+ * Persist the PR the reviewer observed for a task, with its CI and review
+ * verdicts. Like pulse recording this never bumps `updatedAt` — it's an
+ * observation, not a lifecycle transition. No-op when the task has no run
+ * state.
+ */
+export function recordTaskPullRequest(input: RecordTaskPullRequestInput): RunState | undefined {
+  const existing = readRunState(input.config, input.task);
+  if (existing === undefined) {
+    return undefined;
+  }
+  const state: RunState = {
+    ...existing,
+    prUrl: input.prUrl,
+    prNumber: input.prNumber,
+    ci: input.ci,
+    review: input.review,
+  };
+  writeState(input.config, state);
+  return state;
+}
+
+export interface RecordTaskPulseInput {
+  config: ResolvedConfig;
+  task: string;
+  pulse: PulseState;
+  /** Clock for the transition timestamp; defaults to now. */
+  observedAt?: string;
+}
+
+/**
+ * Persist the last observed pulse on the task's run state. `pulseChangedAt`
+ * only moves when the pulse value actually changes, so it records the
+ * transition time, not the observation time. Deliberately does NOT bump
+ * `updatedAt` — that field tracks lifecycle transitions, and pulse writes
+ * happen on every status read. No-op when the task has no run state.
+ */
+export function recordTaskPulse(input: RecordTaskPulseInput): RunState | undefined {
+  const existing = readRunState(input.config, input.task);
+  if (existing === undefined) {
+    return undefined;
+  }
+  const observedAt = input.observedAt ?? nowIso();
+  const pulseChangedAt =
+    existing.pulse === input.pulse ? (existing.pulseChangedAt ?? observedAt) : observedAt;
+  const state: RunState = { ...existing, pulse: input.pulse, pulseChangedAt };
   writeState(input.config, state);
   return state;
 }

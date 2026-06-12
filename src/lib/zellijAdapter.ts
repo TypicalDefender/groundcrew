@@ -168,6 +168,35 @@ export const zellijAdapter: Adapter = {
     // Zellij attaches at the session level; the user clicks the ticket's tab.
     return { kind: "attachCommand", command: `zellij attach ${ZELLIJ_SESSION}` };
   },
+  async sendText(name, text, signal) {
+    // Best-effort: focus the tab by name, then type into it. Both actions
+    // need an attached client (quirk 1 above) — on a fully detached session
+    // they can no-op, so callers should treat zellij sends as advisory.
+    try {
+      await runWorkspaceCommand(
+        "zellij",
+        ["--session", ZELLIJ_SESSION, "action", "go-to-tab-name", name],
+        signal,
+      );
+      await runWorkspaceCommand(
+        "zellij",
+        ["--session", ZELLIJ_SESSION, "action", "write-chars", `${text}\n`],
+        signal,
+      );
+      return { kind: "sent" };
+    } catch (error) {
+      if (isSignalAborted(signal)) {
+        throw error;
+      }
+      if (isZellijMissingError(error)) {
+        return { kind: "missing" };
+      }
+      return { kind: "unavailable", error };
+    }
+  },
+  // No capturePane: zellij's dump-screen acts on the *active* tab and, like
+  // the other active-tab actions (quirk 1 above), silently no-ops on a
+  // detached session — there is no reliable headless per-tab capture path.
 };
 
 async function ensureZellijSession(signal?: AbortSignal): Promise<void> {

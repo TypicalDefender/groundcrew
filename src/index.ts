@@ -7,7 +7,11 @@ export {
 } from "./commands/interruptWorkspace.ts";
 export { orchestrate, type OrchestratorOptions } from "./commands/orchestrator.ts";
 export { resumeWorkspace, type ResumeWorkspaceOptions } from "./commands/resumeWorkspace.ts";
-export { setupWorkspace, type SetupWorkspaceOptions } from "./commands/setupWorkspace.ts";
+export {
+  setupWorkspace,
+  setupWorkspaceCli,
+  type SetupWorkspaceOptions,
+} from "./commands/setupWorkspace.ts";
 export { status, type StatusOptions } from "./commands/status.ts";
 export type {
   Config,
@@ -18,9 +22,41 @@ export type {
   SourceConfig,
 } from "./lib/config.ts";
 export { loadConfig } from "./lib/config.ts";
+export { isPlainTaskId } from "./lib/taskId.ts";
+export { workspaces, type WorkspaceSendResult } from "./lib/workspaces.ts";
 export {
+  collectFleetSnapshot,
+  joinFleetSnapshot,
+  type CollectFleetSnapshotInput,
+  type FleetBoardFeed,
+  type FleetFeedHealth,
+  type FleetIssue,
+  type FleetSnapshot,
+  type FleetTask,
+  type FleetWorkspaceLiveness,
+  type FleetWorktree,
+  type JoinFleetSnapshotInput,
+} from "./lib/fleet.ts";
+export {
+  claudeProjectSlug,
+  decayByAge,
+  detectAwaitingInput,
+  PULSE_THRESHOLDS,
+  pulseDirectory,
+  readPulse,
+  type Pulse,
+  type PulseSource,
+  type PulseState,
+  type ReadPulseInput,
+} from "./lib/pulse.ts";
+export {
+  listRunStates,
   readRunState,
   recordRunState,
+  recordTaskPulse,
+  type RecordTaskPulseInput,
+  recordTaskPullRequest,
+  type RecordTaskPullRequestInput,
   removeRunState,
   runStateDirectory,
   runStatePath,
@@ -46,6 +82,21 @@ export {
   type AgentResolution,
   type RepositoryResolution,
 } from "./lib/adapters/linear/parsing.ts";
+export {
+  clearPullRequestLookupCache,
+  fetchReviewComments,
+  findPullRequestsForBranch,
+  isMergeablePullRequest,
+  mergePullRequest,
+  type MergePullRequestInput,
+  type MergePullRequestResult,
+  summarizeCheckRollup,
+  type CiStatus,
+  type FetchReviewCommentsInput,
+  type PullRequestSummary,
+  type ReviewComment,
+  type ReviewState,
+} from "./lib/pullRequests.ts";
 export { getUsageByAgent, type UsageByAgent } from "./lib/usage.ts";
 export { type Board, createBoard } from "./lib/board.ts";
 export { buildSources, buildSourcesWith } from "./lib/buildSources.ts";

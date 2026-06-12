@@ -15,7 +15,7 @@ export default defineConfig(
       // `tsconfig.base.json`'s `paths` mapping — and the file isn't included
       // in any leaf tsconfig project, so oxlint's typeAware pass can't apply
       // the mapping. The file isn't internal source, so exclude it from lint.
-      ignorePatterns: ["crew.config.example.ts"],
+      ignorePatterns: ["crew.config.example.ts", "deck/.next/**", "deck/next-env.d.ts"],
       overrides: [
         {
           files: ["**/bin/**/*.js", "**/bin/**/*.cjs"],
