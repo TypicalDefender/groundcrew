@@ -8,6 +8,8 @@
  * so every rule here is unit-testable without spawning anything.
  */
 
+import { parseFramePayload } from "@/lib/framePayload";
+
 export interface BridgePty {
   write: (data: string) => void;
   resize: (cols: number, rows: number) => void;
@@ -125,13 +127,8 @@ export class TerminalBridge {
 
 /** Parse one raw client message; undefined for anything malformed. */
 export function parseClientFrame(raw: string): ClientFrame | undefined {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
-  if (typeof parsed !== "object" || parsed === null || !("type" in parsed)) {
+  const parsed = parseFramePayload(raw);
+  if (parsed === undefined) {
     return undefined;
   }
   if (parsed.type === "input" && "data" in parsed && typeof parsed.data === "string") {

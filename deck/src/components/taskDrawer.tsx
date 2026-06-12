@@ -7,6 +7,7 @@ import type { FleetTask } from "@clipboard-health/groundcrew";
 import { ActionBar, type ActionOutcome } from "@/components/actionBar";
 import { NudgeBox } from "@/components/nudgeBox";
 import { AgentBadge, Chip, PulseDot } from "@/components/primitives";
+import { TerminalPane } from "@/components/terminalPane";
 import { ciTone, pulseColor, reviewTone } from "@/lib/statusTone";
 
 function Section({
@@ -168,6 +169,12 @@ export function TaskDrawer({
             )}
           </Section>
         )}
+
+        {task.workspace === "live" ? (
+          <Section title="Terminal">
+            <TerminalPane task={task.id} />
+          </Section>
+        ) : undefined}
 
         {task.workspace === "live" ? (
           <Section title="Nudge the agent">
