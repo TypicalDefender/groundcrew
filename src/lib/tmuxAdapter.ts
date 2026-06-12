@@ -11,6 +11,11 @@ import {
   runWorkspaceCommand,
   type Workspace,
 } from "./workspaceAdapter.ts";
+import { randomUUID } from "node:crypto";
+import { rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { debug, errorMessage, readEnvironmentVariable } from "./util.ts";
 
 const TMUX_SESSION = "groundcrew";
@@ -85,6 +90,40 @@ export const tmuxAdapter: Adapter = {
   accessHint(name) {
     return { kind: "attachCommand", command: `tmux attach -t ${tmuxTarget(name)}` };
   },
+  async sendText(name, text, signal) {
+    const target = tmuxTarget(name);
+    // Stage the text in a tmux buffer via a temp file and paste it with
+    // bracketed-paste semantics: multiline text lands as ONE message instead
+    // of submitting once per line, exactly like a human paste. C-u first
+    // clears any half-typed input so the message starts on a clean prompt.
+    const stagedPath = path.join(tmpdir(), `groundcrew-send-${randomUUID()}.txt`);
+    const bufferName = `groundcrew-${randomUUID()}`;
+    try {
+      writeFileSync(stagedPath, text, { mode: 0o600 });
+      await runWorkspaceCommand("tmux", ["send-keys", "-t", target, "C-u"], signal);
+      await runWorkspaceCommand("tmux", ["load-buffer", "-b", bufferName, stagedPath], signal);
+      await runWorkspaceCommand(
+        "tmux",
+        ["paste-buffer", "-p", "-d", "-b", bufferName, "-t", target],
+        signal,
+      );
+      // Give the pane a beat to render the paste before submitting, so the
+      // agent's prompt sees the full text.
+      await sendDelay();
+      await runWorkspaceCommand("tmux", ["send-keys", "-t", target, "Enter"], signal);
+      return { kind: "sent" };
+    } catch (error) {
+      if (isSignalAborted(signal)) {
+        throw error;
+      }
+      if (isTmuxNotFoundError(error)) {
+        return { kind: "missing" };
+      }
+      return { kind: "unavailable", error };
+    } finally {
+      rmSync(stagedPath, { force: true });
+    }
+  },
   async capturePane(name, signal) {
     try {
       return await runWorkspaceCommand(
@@ -102,6 +141,27 @@ export const tmuxAdapter: Adapter = {
     }
   },
 };
+
+const SEND_SUBMIT_DELAY_MS = 250;
+
+let sendDelayOverride: (() => Promise<void>) | undefined;
+
+/** Test seam: replace the pre-submit delay (default 250ms real sleep). */
+export function setSendDelayForTesting(delay: (() => Promise<void>) | undefined): void {
+  sendDelayOverride = delay;
+}
+
+async function sendDelay(): Promise<void> {
+  /* v8 ignore next 4 @preserve -- the real sleep only runs outside tests */
+  const wait =
+    sendDelayOverride ??
+    (async (): Promise<void> => {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, SEND_SUBMIT_DELAY_MS);
+      });
+    });
+  await wait();
+}
 
 function tmuxTarget(name: string): string {
   return `${TMUX_SESSION}:${name}`;

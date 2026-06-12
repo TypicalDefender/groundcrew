@@ -18,6 +18,7 @@ import {
   type WorkspaceInterruptResult,
   type WorkspaceKind,
   type WorkspaceProbe,
+  type WorkspaceSendResult,
 } from "./workspaceAdapter.ts";
 
 export type {
@@ -28,6 +29,7 @@ export type {
   WorkspaceInterruptResult,
   WorkspaceKind,
   WorkspaceProbe,
+  WorkspaceSendResult,
   WorkspaceStatus,
 } from "./workspaceAdapter.ts";
 
@@ -155,6 +157,24 @@ async function accessHintForWorkspace(
 }
 
 /**
+ * Type text into the named workspace and submit it. `unavailable` covers
+ * backends without a send facility as well as backend failures.
+ */
+async function sendTextToWorkspace(
+  config: ResolvedConfig,
+  name: string,
+  text: string,
+  signal?: AbortSignal,
+): Promise<WorkspaceSendResult> {
+  const adapter = await adapterFor(config, signal);
+  /* v8 ignore next 3 @preserve -- every built-in backend implements sendText; the guard protects future adapters */
+  if (adapter.sendText === undefined) {
+    return { kind: "unavailable" };
+  }
+  return await adapter.sendText(name, text, signal);
+}
+
+/**
  * Visible pane text for the named workspace, or `undefined` when the
  * backend can't capture (workspace missing, command failed, or the backend
  * has no headless capture path — e.g. zellij).
@@ -206,4 +226,5 @@ export const workspaces = {
   interrupt: interruptWorkspace,
   accessHint: accessHintForWorkspace,
   capturePane: capturePaneForWorkspace,
+  sendText: sendTextToWorkspace,
 };

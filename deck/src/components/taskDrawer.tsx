@@ -4,6 +4,7 @@ import { useEffect } from "react";
 
 import type { FleetTask } from "@clipboard-health/groundcrew";
 
+import { NudgeBox } from "@/components/nudgeBox";
 import { AgentBadge, Chip, PulseDot } from "@/components/primitives";
 import { ciTone, pulseColor, reviewTone } from "@/lib/statusTone";
 
@@ -162,6 +163,12 @@ export function TaskDrawer({
             )}
           </Section>
         )}
+
+        {task.workspace === "live" ? (
+          <Section title="Nudge the agent">
+            <NudgeBox task={task.id} />
+          </Section>
+        ) : undefined}
 
         <Section title="Workspace">
           <Row label="session">{task.workspace}</Row>

@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -8,6 +8,7 @@ import type { RunCommandOptions } from "./commandRunner.ts";
 import type { ResolvedConfig, WorkspaceKindSetting } from "./config.ts";
 import type * as hostModule from "./host.ts";
 import { detectHostCapabilities, type HostCapabilities } from "./host.ts";
+import { setSendDelayForTesting } from "./tmuxAdapter.ts";
 import { debug } from "./util.ts";
 import type * as utilModule from "./util.ts";
 import {
@@ -1280,6 +1281,17 @@ function routeArgs(
   };
 }
 
+// Records the contents of files handed to `tmux load-buffer` (read at call
+// time — the adapter deletes them afterwards).
+function recordStagedBuffers(staged: string[]): RunCommandMock {
+  return (_command, arguments_) => {
+    if (arguments_[0] === "load-buffer") {
+      staged.push(readFileSync(String(arguments_.at(-1)), "utf8"));
+    }
+    return "";
+  };
+}
+
 const CMUX_CAPTURE_LIST = JSON.stringify({
   workspaces: [{ title: "team-1", id: "uuid-team-1" }],
 });
@@ -1369,5 +1381,174 @@ describe("workspaces.capturePane", () => {
 
     expect(actual).toBeUndefined();
     expect(runMock).not.toHaveBeenCalledWith("zellij", expect.arrayContaining(["capture-pane"]));
+  });
+});
+
+describe("workspaces.sendText", () => {
+  beforeEach(commonBeforeEach);
+  afterEach(() => {
+    setSendDelayForTesting(undefined);
+    commonAfterEach();
+  });
+
+  it("sends through cmux by resolving the workspace title to its handle", async () => {
+    runMock.mockImplementation(routeArgs({ "list-workspaces": CMUX_CAPTURE_LIST }));
+
+    const result = await workspaces.sendText(makeConfig("cmux"), "team-1", "fix the lint error");
+
+    expect(result).toStrictEqual({ kind: "sent" });
+    expect(runMock).toHaveBeenCalledWith("cmux", [
+      "send",
+      "--workspace",
+      "uuid-team-1",
+      "fix the lint error",
+    ]);
+  });
+
+  it("reports missing when the cmux workspace title is unknown", async () => {
+    runMock.mockImplementation(routeArgs({ "list-workspaces": '{"workspaces":[]}' }));
+
+    await expect(workspaces.sendText(makeConfig("cmux"), "team-1", "hello")).resolves.toStrictEqual(
+      { kind: "missing" },
+    );
+  });
+
+  it("pastes through a tmux buffer and submits with Enter", async () => {
+    setSendDelayForTesting(async () => {
+      // tests submit immediately; the real 250ms pause is production-only
+    });
+    detectHostMock.mockResolvedValue(makeHost({ hasCmux: false, hasTmux: true }));
+    const staged: string[] = [];
+    runMock.mockImplementation(recordStagedBuffers(staged));
+
+    const multiline = "line one\nline two 'with quotes' and $vars";
+    const result = await workspaces.sendText(makeConfig("tmux"), "team-1", multiline);
+
+    expect(result).toStrictEqual({ kind: "sent" });
+    // The staged buffer carries the text verbatim — no shell mangling.
+    expect(staged).toStrictEqual([multiline]);
+    const tmuxCalls = runMock.mock.calls.map(
+      (call) => `${String(call[1][0])}:${String(call[1].at(-1))}`,
+    );
+    expect(tmuxCalls[0]).toBe("send-keys:C-u");
+    expect(tmuxCalls.at(-1)).toBe("send-keys:Enter");
+    expect(runMock).toHaveBeenCalledWith(
+      "tmux",
+      expect.arrayContaining(["paste-buffer", "-p", "-t", "groundcrew:team-1"]),
+    );
+  });
+
+  it("reports missing when the tmux window is gone", async () => {
+    setSendDelayForTesting(async () => {
+      // tests submit immediately; the real 250ms pause is production-only
+    });
+    detectHostMock.mockResolvedValue(makeHost({ hasCmux: false, hasTmux: true }));
+    runMock.mockImplementation(whenArgThrows("send-keys", "can't find window team-1"));
+
+    await expect(workspaces.sendText(makeConfig("tmux"), "team-1", "hello")).resolves.toStrictEqual(
+      { kind: "missing" },
+    );
+  });
+
+  it("focuses the zellij tab by name and writes the text with a trailing newline", async () => {
+    detectHostMock.mockResolvedValue(makeZellijHost());
+    runMock.mockReturnValue("");
+
+    const result = await workspaces.sendText(makeConfig("zellij"), "team-1", "continue");
+
+    expect(result).toStrictEqual({ kind: "sent" });
+    expect(runMock).toHaveBeenCalledWith("zellij", [
+      "--session",
+      "groundcrew",
+      "action",
+      "go-to-tab-name",
+      "team-1",
+    ]);
+    expect(runMock).toHaveBeenCalledWith("zellij", [
+      "--session",
+      "groundcrew",
+      "action",
+      "write-chars",
+      "continue\n",
+    ]);
+  });
+
+  it("reports unavailable when the cmux list itself fails", async () => {
+    runMock.mockImplementation(whenArgThrows("list-workspaces", "socket gone"));
+
+    await expect(workspaces.sendText(makeConfig("cmux"), "team-1", "hello")).resolves.toStrictEqual(
+      { kind: "unavailable" },
+    );
+  });
+
+  it("rethrows an aborted cmux send", async () => {
+    runMock.mockImplementation(
+      routeArgs({ "list-workspaces": CMUX_CAPTURE_LIST }, { send: "aborted" }),
+    );
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      workspaces.sendText(makeConfig("cmux"), "team-1", "hello", controller.signal),
+    ).rejects.toThrow("aborted");
+  });
+
+  it("reports unavailable when tmux fails for a non-missing reason", async () => {
+    setSendDelayForTesting(async () => {
+      // immediate
+    });
+    detectHostMock.mockResolvedValue(makeHost({ hasCmux: false, hasTmux: true }));
+    runMock.mockImplementation(whenArgThrows("send-keys", "server exploded"));
+
+    const result = await workspaces.sendText(makeConfig("tmux"), "team-1", "hello");
+
+    expect(result.kind).toBe("unavailable");
+  });
+
+  it("rethrows an aborted tmux send", async () => {
+    setSendDelayForTesting(async () => {
+      // immediate
+    });
+    detectHostMock.mockResolvedValue(makeHost({ hasCmux: false, hasTmux: true }));
+    runMock.mockImplementation(whenArgThrows("send-keys", "aborted"));
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      workspaces.sendText(makeConfig("tmux"), "team-1", "hello", controller.signal),
+    ).rejects.toThrow("aborted");
+  });
+
+  it("maps zellij session-missing errors to missing and others to unavailable", async () => {
+    detectHostMock.mockResolvedValue(makeZellijHost());
+    runMock.mockImplementation(whenArgThrows("go-to-tab-name", "Session 'groundcrew' not found"));
+    await expect(workspaces.sendText(makeConfig("zellij"), "team-1", "hi")).resolves.toStrictEqual({
+      kind: "missing",
+    });
+
+    runMock.mockImplementation(whenArgThrows("write-chars", "ipc failure"));
+    const failed = await workspaces.sendText(makeConfig("zellij"), "team-1", "hi");
+    expect(failed.kind).toBe("unavailable");
+  });
+
+  it("rethrows an aborted zellij send", async () => {
+    detectHostMock.mockResolvedValue(makeZellijHost());
+    runMock.mockImplementation(whenArgThrows("go-to-tab-name", "aborted"));
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      workspaces.sendText(makeConfig("zellij"), "team-1", "hi", controller.signal),
+    ).rejects.toThrow("aborted");
+  });
+
+  it("reports unavailable with the error when a backend send fails", async () => {
+    runMock.mockImplementation(
+      routeArgs({ "list-workspaces": CMUX_CAPTURE_LIST }, { send: "socket gone" }),
+    );
+
+    const result = await workspaces.sendText(makeConfig("cmux"), "team-1", "hello");
+
+    expect(result.kind).toBe("unavailable");
   });
 });

@@ -58,6 +58,11 @@ export type WorkspaceCloseResult =
   | { kind: "missing" }
   | { kind: "unavailable"; error?: unknown };
 
+export type WorkspaceSendResult =
+  | { kind: "sent" }
+  | { kind: "missing" }
+  | { kind: "unavailable"; error?: unknown };
+
 export interface Adapter {
   open: (spec: OpenSpec, signal?: AbortSignal) => Promise<void>;
   /**
@@ -82,6 +87,12 @@ export interface Adapter {
    * propagate an aborted signal.
    */
   capturePane?: (name: string, signal?: AbortSignal) => Promise<string | undefined>;
+  /**
+   * Type `text` into the workspace and submit it, as if the operator had
+   * typed it at the agent's prompt. Multiline text must arrive as one
+   * message (paste semantics), not one submit per line.
+   */
+  sendText?: (name: string, text: string, signal?: AbortSignal) => Promise<WorkspaceSendResult>;
 }
 
 export async function runWorkspaceCommand(
