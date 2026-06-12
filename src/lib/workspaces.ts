@@ -154,6 +154,20 @@ async function accessHintForWorkspace(
   return adapter.accessHint(name);
 }
 
+/**
+ * Visible pane text for the named workspace, or `undefined` when the
+ * backend can't capture (workspace missing, command failed, or the backend
+ * has no headless capture path — e.g. zellij).
+ */
+async function capturePaneForWorkspace(
+  config: ResolvedConfig,
+  name: string,
+  signal?: AbortSignal,
+): Promise<string | undefined> {
+  const adapter = await adapterFor(config, signal);
+  return adapter.capturePane === undefined ? undefined : await adapter.capturePane(name, signal);
+}
+
 async function interruptWorkspace(
   config: ResolvedConfig,
   name: string,
@@ -191,4 +205,5 @@ export const workspaces = {
   },
   interrupt: interruptWorkspace,
   accessHint: accessHintForWorkspace,
+  capturePane: capturePaneForWorkspace,
 };

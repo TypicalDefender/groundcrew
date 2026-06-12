@@ -168,6 +168,9 @@ export const zellijAdapter: Adapter = {
     // Zellij attaches at the session level; the user clicks the ticket's tab.
     return { kind: "attachCommand", command: `zellij attach ${ZELLIJ_SESSION}` };
   },
+  // No capturePane: zellij's dump-screen acts on the *active* tab and, like
+  // the other active-tab actions (quirk 1 above), silently no-ops on a
+  // detached session — there is no reliable headless per-tab capture path.
 };
 
 async function ensureZellijSession(signal?: AbortSignal): Promise<void> {

@@ -85,6 +85,22 @@ export const tmuxAdapter: Adapter = {
   accessHint(name) {
     return { kind: "attachCommand", command: `tmux attach -t ${tmuxTarget(name)}` };
   },
+  async capturePane(name, signal) {
+    try {
+      return await runWorkspaceCommand(
+        "tmux",
+        ["capture-pane", "-p", "-t", tmuxTarget(name)],
+        signal,
+      );
+    } catch (error) {
+      if (isSignalAborted(signal)) {
+        throw error;
+      }
+      debug(`tmux capture-pane failed for ${name}: ${errorMessage(error)}`);
+      // oxlint-disable-next-line unicorn/no-useless-undefined -- undefined marks the capture as unavailable.
+      return undefined;
+    }
+  },
 };
 
 function tmuxTarget(name: string): string {

@@ -74,6 +74,14 @@ export interface Adapter {
    * has no concise external hint.
    */
   accessHint: (name: string) => WorkspaceAccessHint | undefined;
+  /**
+   * Visible pane text for the named workspace. `undefined` means "couldn't
+   * capture": the workspace is missing, the backend command failed, or the
+   * backend has no headless capture path (such backends omit the method
+   * entirely). Best-effort — implementations must not throw, except to
+   * propagate an aborted signal.
+   */
+  capturePane?: (name: string, signal?: AbortSignal) => Promise<string | undefined>;
 }
 
 export async function runWorkspaceCommand(

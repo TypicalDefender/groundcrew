@@ -1257,3 +1257,116 @@ describe("workspaces.close (zellij)", () => {
     });
   });
 });
+
+// Router for capture tests that need one needle to succeed and another to
+// throw within the same call sequence (vitest/no-conditional-in-test).
+function routeArgs(
+  outputs: Record<string, string>,
+  errors: Record<string, string> = {},
+): RunCommandMock {
+  return (_command, arguments_) => {
+    for (const [needle, message] of Object.entries(errors)) {
+      if (arguments_.includes(needle)) {
+        throw new Error(message);
+      }
+    }
+    for (const [needle, value] of Object.entries(outputs)) {
+      if (arguments_.includes(needle)) {
+        return value;
+      }
+    }
+    return "";
+  };
+}
+
+const CMUX_CAPTURE_LIST = JSON.stringify({
+  workspaces: [{ title: "team-1", id: "uuid-team-1" }],
+});
+
+describe("workspaces.capturePane", () => {
+  beforeEach(commonBeforeEach);
+  afterEach(commonAfterEach);
+
+  it("captures a cmux pane by resolving the workspace title to its handle", async () => {
+    runMock.mockImplementation(
+      routeArgs({ "list-workspaces": CMUX_CAPTURE_LIST, "capture-pane": "agent output" }),
+    );
+
+    const actual = await workspaces.capturePane(makeConfig("cmux"), "team-1");
+
+    expect(actual).toBe("agent output");
+    expect(runMock).toHaveBeenCalledWith("cmux", ["capture-pane", "--workspace", "uuid-team-1"]);
+  });
+
+  it("returns undefined without capturing when the cmux workspace is missing", async () => {
+    runMock.mockImplementation(whenArg("list-workspaces", '{"workspaces":[]}'));
+
+    const actual = await workspaces.capturePane(makeConfig("cmux"), "team-1");
+
+    expect(actual).toBeUndefined();
+    expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["capture-pane"]));
+  });
+
+  it("returns undefined when cmux list-workspaces fails", async () => {
+    runMock.mockImplementation(whenArgThrows("list-workspaces", "socket gone"));
+
+    await expect(workspaces.capturePane(makeConfig("cmux"), "team-1")).resolves.toBeUndefined();
+  });
+
+  it("returns undefined when cmux capture-pane fails", async () => {
+    runMock.mockImplementation(
+      routeArgs({ "list-workspaces": CMUX_CAPTURE_LIST }, { "capture-pane": "boom" }),
+    );
+
+    await expect(workspaces.capturePane(makeConfig("cmux"), "team-1")).resolves.toBeUndefined();
+  });
+
+  it("rethrows a cmux capture failure when the signal is aborted", async () => {
+    runMock.mockImplementation(
+      routeArgs({ "list-workspaces": CMUX_CAPTURE_LIST }, { "capture-pane": "aborted" }),
+    );
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      workspaces.capturePane(makeConfig("cmux"), "team-1", controller.signal),
+    ).rejects.toThrow("aborted");
+  });
+
+  it("captures the tmux window pane with capture-pane -p", async () => {
+    detectHostMock.mockResolvedValue(makeHost({ hasCmux: false, hasTmux: true }));
+    runMock.mockImplementation(whenArg("capture-pane", "shell output\n"));
+
+    const actual = await workspaces.capturePane(makeConfig("tmux"), "team-1");
+
+    expect(actual).toBe("shell output\n");
+    expect(runMock).toHaveBeenCalledWith("tmux", ["capture-pane", "-p", "-t", "groundcrew:team-1"]);
+  });
+
+  it("returns undefined when tmux capture-pane fails", async () => {
+    detectHostMock.mockResolvedValue(makeHost({ hasCmux: false, hasTmux: true }));
+    runMock.mockImplementation(whenArgThrows("capture-pane", "can't find window team-1"));
+
+    await expect(workspaces.capturePane(makeConfig("tmux"), "team-1")).resolves.toBeUndefined();
+  });
+
+  it("rethrows a tmux capture failure when the signal is aborted", async () => {
+    detectHostMock.mockResolvedValue(makeHost({ hasCmux: false, hasTmux: true }));
+    runMock.mockImplementation(whenArgThrows("capture-pane", "aborted"));
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      workspaces.capturePane(makeConfig("tmux"), "team-1", controller.signal),
+    ).rejects.toThrow("aborted");
+  });
+
+  it("returns undefined for zellij, which has no headless capture path", async () => {
+    detectHostMock.mockResolvedValue(makeZellijHost());
+
+    const actual = await workspaces.capturePane(makeConfig("zellij"), "team-1");
+
+    expect(actual).toBeUndefined();
+    expect(runMock).not.toHaveBeenCalledWith("zellij", expect.arrayContaining(["capture-pane"]));
+  });
+});

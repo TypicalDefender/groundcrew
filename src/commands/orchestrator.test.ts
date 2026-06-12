@@ -48,6 +48,7 @@ vi.mock(import("../lib/workspaces.ts"), async (importOriginal) => {
       close: vi.fn<typeof actual.workspaces.close>(),
       interrupt: vi.fn<typeof actual.workspaces.interrupt>(),
       accessHint: vi.fn<typeof actual.workspaces.accessHint>(),
+      capturePane: vi.fn<typeof actual.workspaces.capturePane>(),
     },
   };
 });
