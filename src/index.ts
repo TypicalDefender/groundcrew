@@ -7,7 +7,11 @@ export {
 } from "./commands/interruptWorkspace.ts";
 export { orchestrate, type OrchestratorOptions } from "./commands/orchestrator.ts";
 export { resumeWorkspace, type ResumeWorkspaceOptions } from "./commands/resumeWorkspace.ts";
-export { setupWorkspace, type SetupWorkspaceOptions } from "./commands/setupWorkspace.ts";
+export {
+  setupWorkspace,
+  setupWorkspaceCli,
+  type SetupWorkspaceOptions,
+} from "./commands/setupWorkspace.ts";
 export { status, type StatusOptions } from "./commands/status.ts";
 export type {
   Config,
@@ -18,6 +22,7 @@ export type {
   SourceConfig,
 } from "./lib/config.ts";
 export { loadConfig } from "./lib/config.ts";
+export { isPlainTaskId } from "./lib/taskId.ts";
 export {
   collectFleetSnapshot,
   joinFleetSnapshot,
@@ -81,6 +86,9 @@ export {
   fetchReviewComments,
   findPullRequestsForBranch,
   isMergeablePullRequest,
+  mergePullRequest,
+  type MergePullRequestInput,
+  type MergePullRequestResult,
   summarizeCheckRollup,
   type CiStatus,
   type FetchReviewCommentsInput,

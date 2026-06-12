@@ -4,6 +4,7 @@ import {
   fetchReviewComments,
   findPullRequestsForBranch,
   isMergeablePullRequest,
+  mergePullRequest,
   type PullRequestSummary,
   summarizeCheckRollup,
 } from "./pullRequests.ts";
@@ -683,5 +684,59 @@ describe(isMergeablePullRequest, () => {
     expect(isMergeablePullRequest(summary({ ci: "failing" }))).toBe(false);
     // unknown CI is a missing signal, never treated as passing
     expect(isMergeablePullRequest(summary({ ci: "unknown" }))).toBe(false);
+  });
+});
+
+describe(mergePullRequest, () => {
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("merges a mergeable PR with the squash strategy by default", async () => {
+    runCommandMock.mockResolvedValue("");
+
+    const result = await mergePullRequest({ cwd: "/w", pullRequest: summary({ number: 9 }) });
+
+    expect(result).toStrictEqual({ outcome: "merged" });
+    expect(runCommandMock).toHaveBeenCalledWith("gh", ["pr", "merge", "9", "--squash"], {
+      cwd: "/w",
+    });
+  });
+
+  it("honours an explicit merge method and forwards the abort signal", async () => {
+    runCommandMock.mockResolvedValue("");
+    const { signal } = new AbortController();
+
+    await mergePullRequest({
+      cwd: "/w",
+      pullRequest: summary({}),
+      method: "rebase",
+      signal,
+    });
+
+    expect(runCommandMock).toHaveBeenCalledWith("gh", ["pr", "merge", "1", "--rebase"], {
+      cwd: "/w",
+      signal,
+    });
+  });
+
+  it.each([
+    [summary({ state: "merged" })],
+    [summary({ review: "pending" })],
+    [summary({ ci: "failing" })],
+    [summary({ ci: "unknown" })],
+  ])("refuses non-mergeable PRs without calling gh", async (pullRequest) => {
+    const result = await mergePullRequest({ cwd: "/w", pullRequest });
+
+    expect(result.outcome).toBe("refused");
+    expect(runCommandMock).not.toHaveBeenCalled();
+  });
+
+  it("reports a structured failure when gh rejects the merge", async () => {
+    runCommandMock.mockRejectedValue(new Error("merge conflict"));
+
+    const result = await mergePullRequest({ cwd: "/w", pullRequest: summary({}) });
+
+    expect(result).toStrictEqual({ outcome: "failed", reason: "merge conflict" });
   });
 });
