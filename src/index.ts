@@ -157,6 +157,11 @@ export {
   type MakeCrewEventInput,
 } from "./lib/crewEvents.ts";
 export type { Notifier, NotifierContext, NotifierDefinition } from "./lib/notifierDefinition.ts";
+export {
+  emitCrewEvent,
+  initializeCrewEvents,
+  resetCrewEventsForTesting,
+} from "./lib/crewEventBus.ts";
 export { notifierRegistry } from "./lib/notifiers/registry.ts";
 export {
   buildNotifiers,

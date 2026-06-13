@@ -4,5 +4,11 @@ export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     const { startTerminalServer } = await import("@/lib/terminalServer");
     await startTerminalServer();
+    // The deck observes pulse/PR transitions; give those observations a
+    // notification sink too.
+    const { restoreOperatorDirectory } = await import("@/lib/crewEnvironment");
+    restoreOperatorDirectory();
+    const { initializeCrewEvents, loadConfig } = await import("@clipboard-health/groundcrew");
+    await initializeCrewEvents(await loadConfig());
   }
 }

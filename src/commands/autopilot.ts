@@ -20,6 +20,7 @@ import {
   type PullRequestSummary,
 } from "../lib/pullRequests.ts";
 import { buildCiFailureNudge } from "../lib/ciLogs.ts";
+import { emitCrewEvent } from "../lib/crewEventBus.ts";
 import {
   type AutopilotActivityEvent,
   recordTaskAutopilot,
@@ -404,6 +405,16 @@ export function createAutopilot(
           },
           now,
         );
+        if (action.attempt >= autopilotFor(config).ciFailure.maxAttempts) {
+          await emitCrewEvent({
+            kind: "autopilot-exhausted",
+            title: `${action.task}: CI nudge budget exhausted`,
+            body: `Autopilot nudged ${action.attempt} time(s) and CI is still failing; take a look.`,
+            task: action.task,
+            url: action.prUrl,
+            now,
+          });
+        }
       }
       return;
     }
@@ -421,6 +432,13 @@ export function createAutopilot(
       { kind: "flag-stuck", detail: `pulse unchanged for ${action.stuckForMinutes}m` },
       now,
     );
+    await emitCrewEvent({
+      kind: "task-stuck",
+      title: `${action.task} looks stuck`,
+      body: `Pulse unchanged for ${action.stuckForMinutes}m; the agent may need a nudge or a human.`,
+      task: action.task,
+      now,
+    });
   }
 
   return {

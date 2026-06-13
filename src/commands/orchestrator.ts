@@ -8,6 +8,7 @@
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { loadConfigWithSource, type ResolvedConfig } from "../lib/config.ts";
+import { initializeCrewEvents } from "../lib/crewEventBus.ts";
 import { acquireKeepAwake } from "../lib/keepAwake.ts";
 import {
   readLastSession,
@@ -174,6 +175,7 @@ export async function orchestrate(options: OrchestratorOptions): Promise<void> {
     return;
   }
 
+  await initializeCrewEvents(config);
   const allSources = await buildSources(rawSources, { globalConfig: config });
   const board: Board = createBoard(allSources);
   await board.verify();

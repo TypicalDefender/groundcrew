@@ -6,12 +6,15 @@
  * starve the rest.
  */
 
-import { kindShape } from "../buildSources.ts";
+import { z } from "zod";
+
 import type { ResolvedConfig } from "../config.ts";
 import type { CrewEvent, CrewEventPriority } from "../crewEvents.ts";
 import type { Notifier, NotifierContext, NotifierDefinition } from "../notifierDefinition.ts";
 import { errorMessage, log } from "../util.ts";
 import { notifierRegistry } from "./registry.ts";
+
+const kindShape = z.object({ kind: z.string() });
 
 export interface NotificationRouting {
   urgent?: readonly string[];

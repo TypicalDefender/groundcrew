@@ -13,6 +13,7 @@ vi.mock("@clipboard-health/groundcrew", () => ({
   recordPause: vi.fn<() => unknown>(),
   clearPause: vi.fn<() => boolean>(),
   parseDurationMilliseconds: vi.fn<(raw: string) => number>(),
+  emitCrewEvent: vi.fn<() => Promise<unknown>>(async () => ({})),
 }));
 
 const loadConfigMock = vi.mocked(loadConfig);

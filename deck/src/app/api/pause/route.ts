@@ -1,4 +1,9 @@
-import { loadConfig, parseDurationMilliseconds, recordPause } from "@clipboard-health/groundcrew";
+import {
+  emitCrewEvent,
+  loadConfig,
+  parseDurationMilliseconds,
+  recordPause,
+} from "@clipboard-health/groundcrew";
 
 import { controlError, ok } from "@/lib/controlRoute";
 import { restoreOperatorDirectory } from "@/lib/crewEnvironment";
@@ -55,6 +60,12 @@ export async function POST(request: Request): Promise<Response> {
       now,
       ...(until === undefined ? {} : { until }),
       ...(body.reason === undefined ? {} : { reason: body.reason }),
+    });
+    await emitCrewEvent({
+      kind: "crew-paused",
+      title: "Crew paused",
+      body: state.until === undefined ? "Paused until woken." : `Paused until ${state.until}.`,
+      now,
     });
     return ok({ pause: state });
   } catch (error) {

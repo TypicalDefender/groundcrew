@@ -6,6 +6,7 @@
  */
 
 import { loadConfig } from "../lib/config.ts";
+import { emitCrewEvent, initializeCrewEvents } from "../lib/crewEventBus.ts";
 import { clearPause, type PauseState, recordPause } from "../lib/pause.ts";
 import { log } from "../lib/util.ts";
 
@@ -87,6 +88,13 @@ export async function pauseCli(argv: string[]): Promise<void> {
   });
   log(describePause(state));
   log("The watch loop keeps ticking but skips dispatch/review/clean while paused.");
+  await initializeCrewEvents(config);
+  await emitCrewEvent({
+    kind: "crew-paused",
+    title: "Crew paused",
+    body: describePause(state),
+    now,
+  });
 }
 
 export async function wakeCli(argv: string[]): Promise<void> {
@@ -94,9 +102,14 @@ export async function wakeCli(argv: string[]): Promise<void> {
     throw new Error("Usage: crew wake");
   }
   const config = await loadConfig();
-  log(
-    clearPause({ config })
-      ? "Crew is awake; the next tick resumes dispatch."
-      : "Crew was not paused.",
-  );
+  const woke = clearPause({ config });
+  log(woke ? "Crew is awake; the next tick resumes dispatch." : "Crew was not paused.");
+  if (woke) {
+    await initializeCrewEvents(config);
+    await emitCrewEvent({
+      kind: "crew-woken",
+      title: "Crew woken",
+      body: "Dispatch, review, and cleanup resume on the next tick.",
+    });
+  }
 }

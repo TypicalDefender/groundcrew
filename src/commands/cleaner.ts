@@ -5,6 +5,7 @@
  */
 
 import type { ResolvedConfig } from "../lib/config.ts";
+import { emitCrewEvent } from "../lib/crewEventBus.ts";
 import { recordCleanedUpRuns } from "../lib/runStateCleanup.ts";
 import { naturalIdFromCanonical, type BoardState } from "../lib/taskSource.ts";
 import { log, logEvent } from "../lib/util.ts";
@@ -73,6 +74,15 @@ export function createCleaner(deps: CleanerDeps): Cleaner {
     recordCleanedUpRuns(config, result.removed);
     logTeardown(result);
     recordTeardownEvents(result);
+    for (const entry of result.removed) {
+      // oxlint-disable-next-line no-await-in-loop -- one info event per finished task, in order
+      await emitCrewEvent({
+        kind: "task-done",
+        title: `${entry.task} is done`,
+        body: `Reached a terminal status; workspace and worktree cleaned up (${entry.repository}).`,
+        task: entry.task,
+      });
+    }
   }
 
   return { runOnce };

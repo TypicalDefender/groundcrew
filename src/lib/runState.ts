@@ -2,6 +2,7 @@ import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync
 import path from "node:path";
 
 import type { ResolvedConfig } from "./config.ts";
+import { emitCrewEvent } from "./crewEventBus.ts";
 // Type-only imports: erased at compile time, so no runtime cycle with
 // pulse.ts (which imports this module for run-state reads).
 import type { CiStatus, ReviewState } from "./pullRequests.ts";
@@ -522,6 +523,16 @@ export function recordTaskPullRequest(input: RecordTaskPullRequestInput): RunSta
     review: input.review,
   };
   writeState(input.config, state);
+  const wasMergeable = existing.ci === "passing" && existing.review === "approved";
+  if (!wasMergeable && input.ci === "passing" && input.review === "approved") {
+    void emitCrewEvent({
+      kind: "pr-mergeable",
+      title: `${state.task}'s pull request is ready to merge`,
+      body: "Approved with passing CI.",
+      task: state.task,
+      url: input.prUrl,
+    });
+  }
   return state;
 }
 
@@ -550,6 +561,15 @@ export function recordTaskPulse(input: RecordTaskPulseInput): RunState | undefin
     existing.pulse === input.pulse ? (existing.pulseChangedAt ?? observedAt) : observedAt;
   const state: RunState = { ...existing, pulse: input.pulse, pulseChangedAt };
   writeState(input.config, state);
+  if (input.pulse === "awaiting-input" && existing.pulse !== "awaiting-input") {
+    // Transition just observed — tell a human (no-op without a sink).
+    void emitCrewEvent({
+      kind: "awaiting-input",
+      title: `${state.task} is waiting for your input`,
+      body: "The agent stopped with a question; open its workspace to answer.",
+      task: state.task,
+    });
+  }
   return state;
 }
 
