@@ -41,3 +41,4 @@ vitest.config.*.timestamp*
 .claude/settings.local.json
 docs/superpowers/
 static/logo-concept.html
+deck/e2e/fixture/xdg-state/

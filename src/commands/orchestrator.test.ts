@@ -77,6 +77,10 @@ vi.mock(import("../lib/pullRequests.ts"), async (importOriginal) => {
 // points logging at shared /tmp, where a stray real pause file could
 // otherwise gate all of these tests. Gating itself is covered in
 // orchestratorPause.test.ts against real pause files.
+vi.mock(import("../lib/configRegistry.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, registerConfig: vi.fn<typeof actual.registerConfig>(() => []) };
+});
 vi.mock(import("../lib/pause.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, readPause: vi.fn<typeof readPause>() };

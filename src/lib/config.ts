@@ -1654,3 +1654,27 @@ export async function loadConfig(): Promise<Readonly<ResolvedConfig>> {
   const loadedConfig = await loadConfigWithSource();
   return loadedConfig.config;
 }
+
+/**
+ * Load and resolve one specific config file, bypassing discovery and the
+ * process-wide cache. The portfolio view aggregates several configs in a
+ * single process; unlike `loadConfig`, this never redirects the host
+ * process's log file.
+ */
+export async function loadConfigFromPath(filepath: string): Promise<Readonly<ResolvedConfig>> {
+  const resolvedPath = path.resolve(filepath);
+  if (!existsSync(resolvedPath)) {
+    fail(`config not found: ${resolvedPath}`);
+  }
+  const result = await loadAt(resolvedPath);
+  const userConfig: unknown = result.config;
+  if (result.isEmpty === true || !isPlainObject(userConfig)) {
+    fail(
+      `${result.filepath} must export a config object (e.g. \`export default { ... } satisfies Config\`)`,
+    );
+  }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- runtime fields are validated by applyDefaults/validate
+  const resolved = applyDefaults(userConfig as unknown as Config, path.dirname(result.filepath));
+  validate(resolved);
+  return Object.freeze(resolved);
+}

@@ -60,3 +60,9 @@ The deck exposes the fleet read model over HTTP for tooling:
 - `GET /api/fleet/stream` — server-sent events; one snapshot immediately,
   then one per poll interval. Collection failures arrive as `feed-error`
   events.
+
+## Portfolio (`crew deck --all`)
+
+Every `crew run` / `crew deck` registers its config in `${XDG_STATE_HOME:-~/.local/state}/groundcrew/configs.json`. The `/portfolio` page (and `crew deck --all`, which prints its URL) aggregates a fleet snapshot per registered config; a config that fails to load shows its error without hiding the others.
+
+Caveat: configs are loaded inside the deck server process, so **relative paths in a registered config (e.g. a `todo-txt` source's `todoPath`) resolve against the deck server's working directory**, not the config's directory. Use absolute paths in configs you want aggregated from elsewhere.

@@ -28,6 +28,8 @@ export default defineConfig({
     env: {
       GROUNDCREW_CONFIG: path.join(FIXTURE_DIR, "crew.config.ts"),
       GROUNDCREW_PROJECT_CWD: FIXTURE_DIR,
+      // Hermetic config registry for the portfolio view.
+      XDG_STATE_HOME: path.join(FIXTURE_DIR, "xdg-state"),
     },
   },
 });

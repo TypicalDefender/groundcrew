@@ -14,6 +14,7 @@ import {
   recordTaskAutopilot,
   recordTaskPulse,
   recordTaskPullRequest,
+  registerConfig,
 } from "@clipboard-health/groundcrew";
 
 const FIXTURE_DIR = path.join(import.meta.dirname, "fixture");
@@ -55,6 +56,11 @@ export default async function globalSetup(): Promise<void> {
   process.chdir(FIXTURE_DIR);
   // oxlint-disable-next-line node/no-process-env -- same channel the deck server uses
   process.env.GROUNDCREW_CONFIG = path.join(FIXTURE_DIR, "crew.config.ts");
+  // Hermetic registry for the portfolio view (matches the webServer env).
+  // oxlint-disable-next-line node/no-process-env -- same channel the deck server uses
+  process.env.XDG_STATE_HOME = path.join(FIXTURE_DIR, "xdg-state");
+  rmSync(path.join(FIXTURE_DIR, "xdg-state"), { recursive: true, force: true });
+  registerConfig({ path: path.join(FIXTURE_DIR, "crew.config.ts"), name: "fixture" });
   const config = await loadConfig();
 
   function seed(task: string, agent: string): void {

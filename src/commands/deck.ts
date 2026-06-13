@@ -12,6 +12,8 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 
 import { loadConfigWithSource, type ResolvedConfig } from "../lib/config.ts";
+import { registerConfig } from "../lib/configRegistry.ts";
+import { log } from "../lib/util.ts";
 
 export interface DeckOptions {
   /** Overrides `deck.port` from config. */
@@ -20,6 +22,8 @@ export interface DeckOptions {
   dev?: boolean;
   /** Skip the production build and serve the existing one. */
   skipBuild?: boolean;
+  /** Open on the portfolio view (every registered crew config). */
+  all?: boolean;
 }
 
 export interface DeckStep {
@@ -71,16 +75,20 @@ export function parseDeckArguments(argv: readonly string[]): DeckOptions {
       options.skipBuild = true;
       continue;
     }
+    if (argument === "--all") {
+      options.all = true;
+      continue;
+    }
     if (argument === "--port") {
       const value = Number(argv[index + 1]);
       if (!Number.isInteger(value) || value < 1 || value > 65_535) {
-        throw new Error("Usage: crew deck [--port <1-65535>] [--dev] [--no-build]");
+        throw new Error("Usage: crew deck [--all] [--port <1-65535>] [--dev] [--no-build]");
       }
       options.port = value;
       index += 1;
       continue;
     }
-    throw new Error("Usage: crew deck [--port <1-65535>] [--dev] [--no-build]");
+    throw new Error("Usage: crew deck [--all] [--port <1-65535>] [--dev] [--no-build]");
   }
   return options;
 }
@@ -124,6 +132,12 @@ export async function deck(input: DeckRunInput): Promise<void> {
 export async function deckCli(argv: string[], runDeck: typeof deck = deck): Promise<void> {
   const options = parseDeckArguments(argv);
   const loaded = await loadConfigWithSource();
+  // Every deck launch registers its config so `--all` can aggregate it.
+  registerConfig({ path: loaded.source.filepath });
+  if (options.all === true) {
+    const port = options.port ?? loaded.config.deck.port;
+    log(`Portfolio view: http://localhost:${port}/portfolio`);
+  }
   await runDeck({
     config: loaded.config,
     options,

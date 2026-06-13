@@ -1,3 +1,4 @@
+import { captureConsoleLog } from "../testHelpers/consoleCapture.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -45,6 +46,11 @@ function makeConfig(port = 4400): ResolvedConfig {
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
+
+vi.mock(import("../lib/configRegistry.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, registerConfig: vi.fn<typeof actual.registerConfig>(() => []) };
+});
 
 describe(deckCommandPlan, () => {
   it("plans a build then a start on the configured port", () => {
@@ -109,6 +115,7 @@ describe(parseDeckArguments, () => {
     expect(parseDeckArguments(["--port", "5111"])).toStrictEqual({ port: 5111 });
     expect(parseDeckArguments(["--dev"])).toStrictEqual({ dev: true });
     expect(parseDeckArguments(["--no-build"])).toStrictEqual({ skipBuild: true });
+    expect(parseDeckArguments(["--all"])).toStrictEqual({ all: true });
   });
 
   it("rejects unknown flags and bad ports", () => {
@@ -211,6 +218,23 @@ describe(deckCli, () => {
     expect(input?.config.deck).toStrictEqual({ port: 4567, pollIntervalMilliseconds: 5000 });
     expect(input?.options).toStrictEqual({ skipBuild: true });
     expect(input?.configPath).toBe("/work/crew.config.ts");
+  });
+});
+
+describe("deckCli --all", () => {
+  it("announces the portfolio URL before serving", async () => {
+    loadConfigWithSourceMock.mockResolvedValue({
+      config: makeConfig(4567),
+      source: { kind: "project", filepath: "/work/crew.config.ts" },
+    });
+    const consoleLog = captureConsoleLog();
+    const runDeck = vi.fn<typeof deck>().mockResolvedValue();
+
+    await deckCli(["--all", "--no-build"], runDeck);
+    consoleLog.restore();
+
+    expect(consoleLog.output()).toContain("Portfolio view: http://localhost:4567/portfolio");
+    expect(runDeck.mock.calls[0]?.[0]?.options).toStrictEqual({ all: true, skipBuild: true });
   });
 });
 

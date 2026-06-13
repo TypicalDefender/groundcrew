@@ -32,6 +32,14 @@ export default function RootLayout({
           <span className="ml-2 text-sm" style={{ color: "var(--nav-item-text)" }}>
             Deck
           </span>
+          <nav className="ml-auto flex gap-4 text-sm">
+            <a href="/" style={{ color: "var(--nav-item-text)" }}>
+              Board
+            </a>
+            <a href="/portfolio" style={{ color: "var(--nav-item-text)" }}>
+              Portfolio
+            </a>
+          </nav>
         </header>
         <main className="mx-auto max-w-6xl px-5 py-8">{children}</main>
       </body>

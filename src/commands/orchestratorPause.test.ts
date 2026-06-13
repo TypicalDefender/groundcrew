@@ -50,6 +50,10 @@ vi.mock(import("./setupWorkspace.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, setupWorkspace: vi.fn<typeof setupWorkspace>() };
 });
+vi.mock(import("../lib/configRegistry.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, registerConfig: vi.fn<typeof actual.registerConfig>(() => []) };
+});
 vi.mock(import("./resumeWorkspace.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, resumeWorkspace: vi.fn<typeof actual.resumeWorkspace>() };

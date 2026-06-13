@@ -48,7 +48,19 @@ export type {
   ResolvedConfig,
   SourceConfig,
 } from "./lib/config.ts";
-export { DEFAULT_AUTOPILOT, loadConfig } from "./lib/config.ts";
+export { DEFAULT_AUTOPILOT, loadConfig, loadConfigFromPath } from "./lib/config.ts";
+export {
+  configRegistryPath,
+  readConfigRegistry,
+  registerConfig,
+  type RegisteredConfig,
+} from "./lib/configRegistry.ts";
+export {
+  collectPortfolioSnapshot,
+  type CollectPortfolioInput,
+  type PortfolioEntry,
+  type PortfolioSnapshot,
+} from "./lib/portfolio.ts";
 export { isPlainTaskId } from "./lib/taskId.ts";
 export { clearPause, pausePath, readPause, recordPause, type PauseState } from "./lib/pause.ts";
 export { isWithinQuietHours, nextTickDelay, type FleetPacingSignals } from "./lib/tickDelay.ts";
