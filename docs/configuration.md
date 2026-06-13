@@ -270,6 +270,35 @@ autopilot: {
 
 Sections you omit keep their defaults. `maxAttempts` and `thresholdMinutes` must be integers ≥ 1; every `enabled` must be an explicit boolean.
 
+## Notifications
+
+Configure notification sinks and route event priorities to them:
+
+```ts
+notifiers: [
+  { kind: "desktop" },                                          // macOS osascript / Linux notify-send
+  { kind: "slack", webhookUrl: "https://hooks.slack.com/..." }, // incoming webhook
+  { kind: "webhook", url: "https://example.com/hook", headers: { authorization: "Bearer …" } },
+],
+notifications: { urgent: ["desktop", "slack"], action: ["slack"], info: [] },
+```
+
+Omit `notifications` to send every event to every configured notifier; an empty list for a priority silences it. The `webhook` notifier POSTs the event as JSON, one event per request:
+
+```json
+{
+  "kind": "task-stuck",
+  "priority": "urgent",
+  "title": "team-1 looks stuck",
+  "body": "Pulse unchanged for 12m.",
+  "at": "2026-06-13T08:00:00.000Z",
+  "task": "team-1",
+  "url": "https://github.com/acme/repo-a/pull/7"
+}
+```
+
+`task` and `url` appear only when the event carries them. A failing notifier is logged and never blocks the others.
+
 ## Full Reference
 
 | Key                                      | Default              | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |

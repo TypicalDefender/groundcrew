@@ -81,10 +81,12 @@ describe("notifier registry discovery", () => {
     ).rejects.toThrow(/directory mismatch/);
   });
 
-  it("starts empty until built-in notifier directories land", async () => {
-    await expect(notifierRegistry).resolves.toStrictEqual({});
-    // The production entry point works against that same empty registry.
-    await expect(buildNotifiers([], CONTEXT)).resolves.toStrictEqual([]);
+  it("scans the built-in notifier directories for the production registry", async () => {
+    const registry = await notifierRegistry;
+    expect(Object.keys(registry).toSorted()).toStrictEqual(["desktop", "slack", "webhook"]);
+    // The production entry point dispatches against that same registry.
+    const notifiers = await buildNotifiers([{ kind: "desktop" }], CONTEXT);
+    expect(notifiers.map((notifier) => notifier.kind)).toStrictEqual(["desktop"]);
   });
 });
 
