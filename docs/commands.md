@@ -152,3 +152,7 @@ The command closes the cmux/tmux/zellij workspace if present, records local run 
 `crew resume <TASK>` reopens an existing task worktree with a continuation prompt. Resume never creates a new worktree; if none exists it fails and leaves re-dispatch to `crew start <task>`.
 
 The resume prompt tells the agent to inspect git status and diff before editing, includes the previous interrupt reason when recorded, and reuses the recorded agent, repository, branch, runner, sandbox, and workspace backend. When no run-state file exists but a worktree does, resume falls back to Linear resolution for the agent and task context.
+
+## `crew attach <task>`
+
+Open the task's live terminal workspace in your current terminal (tmux/zellij; cmux opens in its own app).

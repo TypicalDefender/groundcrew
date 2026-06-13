@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 
+import { attachCli } from "./commands/attach.ts";
 import { cleanupWorkspaceCli } from "./commands/cleanupWorkspace.ts";
 import { doctor } from "./commands/doctor.ts";
 import { initConfigCli } from "./commands/init.ts";
@@ -245,6 +246,11 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     summary: "Reopen an existing task worktree with a continuation prompt",
     usage: "<task>",
     invoke: resumeWorkspaceCli,
+  },
+  attach: {
+    summary: "Open the task's live terminal workspace in this terminal",
+    usage: "<task>",
+    invoke: attachCli,
   },
   setup: {
     summary: "Removed repository bootstrap command",

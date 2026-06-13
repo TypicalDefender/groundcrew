@@ -1,4 +1,5 @@
 export { run } from "./cli.ts";
+export { attachWorkspace, type AttachDeps } from "./commands/attach.ts";
 export { cleanupWorkspace, type CleanupWorkspaceOptions } from "./commands/cleanupWorkspace.ts";
 export { doctor } from "./commands/doctor.ts";
 export {
