@@ -81,7 +81,7 @@ crew task done todo:flaky-triage-1
 
 ## Deck
 
-`crew deck` builds and serves the deck — the crew's web dashboard — on `deck.port` from config (default 4400). `--port <n>` overrides the port for one run, `--dev` starts the hot-reloading dev server instead, and `--no-build` serves the existing production build. The server runs until interrupted.
+`crew deck` builds and serves the deck — the crew's web dashboard — on `deck.port` from config (default 4400). `--port <n>` overrides the port for one run, `--dev` starts the hot-reloading dev server instead, `--no-build` serves the existing production build, and `--all` prints the portfolio URL aggregating every registered crew (see [the deck](./deck.md#portfolio-crew-deck---all)). The server runs until interrupted.
 
 ## Status
 
@@ -152,6 +152,18 @@ The command closes the cmux/tmux/zellij workspace if present, records local run 
 `crew resume <TASK>` reopens an existing task worktree with a continuation prompt. Resume never creates a new worktree; if none exists it fails and leaves re-dispatch to `crew start <task>`.
 
 The resume prompt tells the agent to inspect git status and diff before editing, includes the previous interrupt reason when recorded, and reuses the recorded agent, repository, branch, runner, sandbox, and workspace backend. When no run-state file exists but a worktree does, resume falls back to Linear resolution for the agent and task context.
+
+## Pause and wake
+
+`crew pause [--for <duration>] [--reason <text>]` holds the whole crew: the watch loop keeps ticking (so the deck stays live) but skips dispatch, review, and cleanup until `crew wake` or the expiry passes — an expired pause auto-wakes with no timer. Durations look like `30m`, `2h`, `1d`. The deck shows an amber banner with a Wake button while paused.
+
+## Snooze
+
+`crew snooze <task> --until <time|duration>` holds one task out of dispatch until the expiry (stored on its run state); the reviewer keeps watching its PR. `crew snooze <task> --clear` releases the hold early; expired snoozes need no cleanup. The deck drawer has the same control.
+
+## Run flags
+
+`crew run` performs one orchestrator tick; `--watch` loops with adaptive pacing (fast while any agent is actively working, slow inside configured quiet hours). `--restore` (requires `--watch`) resumes the tasks recorded at the previous shutdown whose workspaces did not survive the gap — after a reboot, the fleet picks up where it stopped. `--dry-run` plans without side effects.
 
 ## `crew attach <task>`
 

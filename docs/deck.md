@@ -39,6 +39,13 @@ The board updates live over a server-sent-events stream. If the stream
 drops, a banner appears and the deck reconnects by itself; if the task
 source is unreachable, the board says so and keeps showing local state.
 
+## Controls
+
+- **Live terminal**: each live task's drawer embeds its real workspace pane (tmux backend); the first viewer holds the keyboard, later viewers watch read-only, and the pane expands to full screen. Other backends fall back to periodic pane snapshots.
+- **Pause / Wake**: a global control mirroring `crew pause` / `crew wake`, with an amber banner while paused.
+- **Snooze**: per-task hold with duration choices in the drawer.
+- **Autopilot**: a per-task panel (on/off switch, CI-nudge budget, recent actions) and a global activity feed on the board.
+
 ## Configuration
 
 ```ts

@@ -27,7 +27,10 @@ Groundcrew watches assigned tasks, creates isolated worktrees, launches agent CL
 - **Sandboxed by default.** Safehouse or Docker Sandboxes isolate each agent on the host; `none` is an explicit escape hatch.
 - **Pluggable task sources.** Linear by default; Jira and local files via [task sources](./docs/task-sources.md).
 - **Multi-agent routing.** Ships `claude` and `codex` presets; bring your own CLI in config.
-- **Live dashboard.** `crew deck` serves a kanban board of the whole fleet — pulse, CI, and review state per task, streaming over SSE. See [the deck](./docs/deck.md).
+- **Live dashboard.** `crew deck` serves a kanban board of the whole fleet — pulse, CI, and review state per task, streaming over SSE, with an embedded live terminal per task and a multi-crew portfolio view (`crew deck --all`). See [the deck](./docs/deck.md).
+- **Operator controls.** Pause the whole crew (`crew pause` / `crew wake`), snooze one task (`crew snooze`), jump into a workspace (`crew attach`), and restore interrupted fleets after a reboot (`crew run --watch --restore`).
+- **Autopilot.** Optional automatic follow-ups each tick: CI-failure nudges with real log excerpts, review-comment delivery (each comment exactly once), auto-merge, and stuck-task detection — all budgeted, all visible in the deck.
+- **Notifications.** Desktop banners, Slack, or any webhook — routed by priority through a pluggable notifier registry. See [configuration](./docs/configuration.md#notifications).
 
 ## Prerequisites
 
